@@ -3394,15 +3394,29 @@ function toTarget(P, e)
 				end
 			end
 		end
-		if d then
+		-- requestEntrance may silently fail for an unloaded/invalid entrance. Only
+		-- stop here when it actually moved the character; otherwise let the tween
+		-- fallback below take over and avoid retrying the failed entrance for 30s.
+		if d and tick() >= (tonumber(getgenv().__EntranceFail) or 0) then
 			getgenv().noclip = true
 			if l == "Temple Clock" then
 				BorrowTempleOfTime()
 			end
+			local entranceOrigin = H.Position
 			I()
 			game.ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", d)
-			task.wait(0.1)
-			return
+			local entranceDeadline = tick() + 1.25
+			local entranceTeleported = (H.Position - entranceOrigin).Magnitude > 150
+			while not entranceTeleported and tick() < entranceDeadline do
+				task.wait()
+				if H.Parent then
+					entranceTeleported = (H.Position - entranceOrigin).Magnitude > 150
+				end
+			end
+			if entranceTeleported then
+				return
+			end
+			getgenv().__EntranceFail = tick() + 30
 		end
 		local Q, I, o, y = N(H.Position), N(P.Position), V(P.Position), V(H.Position)
 		if I and I.Name == "Celestial Domain" and (not Q or Q.Name ~= "Celestial Domain") then
