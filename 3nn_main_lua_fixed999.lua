@@ -3455,6 +3455,15 @@ function toTarget(P, e)
 	if not Z then
 		return
 	end
+	-- [FIX Lv90] Luon bat noclip khi teleport de khong bi kẹt tường/Wall check.
+	pcall(function() getgenv().noclip = true end)
+	-- [FIX Lv90] Biến triggerDist lưu khoảng cách để dịch chuyển tức thời,
+	-- KHONG dùng lại biến e (bị overwrite thành CFrame trong phần Sea3
+	-- special-handling bên dưới). Trước đây, khi gọi toTarget(pos, true)
+	-- (đúng vị trí NPC), e = true bị đổi thành CFrame rác sau đoạn xử lý
+	-- special Sea3 → B(H, e, Y) di chuyển đến sai toạ độ → nhân vật đứng yên.
+	local precise = (e == true)
+	local triggerDist = precise and 8 or 150
 	k.LastCall = tick()
 	if Z and Z.Sit then
 		TweenManager.CancelCurrent()
@@ -3477,9 +3486,9 @@ function toTarget(P, e)
 	end
 	Y = (P.Position - H.Position).Magnitude
 	if Settings["Teleport Y"] then
-		local d, y = Settings["% Health Player"] or 40, Z.Health / Z.MaxHealth
+		local d, yy = Settings["% Health Player"] or 40, Z.Health / Z.MaxHealth
 		local C = d / 100
-		if y < C then
+		if yy < C then
 			G = true
 		else
 			d = Z.Health / Z.MaxHealth
@@ -3488,21 +3497,34 @@ function toTarget(P, e)
 			end
 		end
 	end
-	if Y < (e and 8 or 150) and not G and not ReadyToDodge then
+	-- [FIX Lv90] Với precise mode (đi đến NPC nhận quest), teleport thẳng
+	-- luôn nếu trong bán kính triggerDist thay vì dựa vào tween. Tránh bị
+	-- kẹt khi Y lớn hơn 8 một chút do nhân vật chưa đứng hoàn toàn trên cao.
+	if Y < triggerDist and not G and not ReadyToDodge then
 		TweenManager.CancelTweenOnly()
 		I()
 		H.CFrame = P
 		return
 	end
+	-- [FIX Lv90] Khi precise=true và khoảng cách > triggerDist nhưng < 150
+	-- (cùng đảo, không qua special sea-handling), teleport ngay đến NPC
+	-- để không bị phụ thuộc tween bị block. Đảm bảo TakeQuest LUÔN di
+	-- chuyển nhân vật khi đã có toạ độ NPC.
+	if precise and Y < 250 then
+		TweenManager.CancelTweenOnly()
+		pcall(I)
+		H.CFrame = CFrame.new(P.Position + Vector3.new(0, 4, 0))
+		return
+	end
 	if game.PlaceId ~= 122478697296975 then
-		e = CFrame.new(28609.392578125, 14896.533203125, 106.4216537475586)
+		local seaE = CFrame.new(28609.392578125, 14896.533203125, 106.4216537475586)
 		if
 			game.PlaceId == getgenv().CheckPlaceId
-			and (P.Position - e.Position).Magnitude > 3000
-			and (e.Position - H.Position).Magnitude <= 3000
+			and (P.Position - seaE.Position).Magnitude > 3000
+			and (seaE.Position - H.Position).Magnitude <= 3000
 		then
-			B(H, e, 400, 8)
-			if (e.Position - H.Position).Magnitude < 8 then
+			B(H, seaE, 400, 8)
+			if (seaE.Position - H.Position).Magnitude < 8 then
 				game:GetService("ReplicatedStorage")
 					:WaitForChild("Remotes")
 					:WaitForChild("CommF_")
@@ -3706,13 +3728,14 @@ function toTarget(P, e)
 	Z = if ReadyToDodge
 		then (CFrame.new(0, 200, 0))
 		else if G then (CFrame.new(0, Settings["Distance Teleport Y"] or 800, 0)) else Z
-	Y, e = Settings["Speed Tween "] or 300, P * Z
-	if (e.Position - H.Position).Magnitude < 3 and not ReadyToDodge and not G then
+	local speed = Settings["Speed Tween "] or 300
+	local finalCF = P * Z
+	if (finalCF.Position - H.Position).Magnitude < 3 and not ReadyToDodge and not G then
 		TweenManager.CancelTweenOnly()
-		H.CFrame = e
+		H.CFrame = finalCF
 		return
 	end
-	B(H, e, Y)
+	B(H, finalCF, speed)
 end
 getgenv().BackupTween = toTarget
 spawn(function()
@@ -4196,15 +4219,60 @@ function DeleteIgnoredMob()
 		end
 	end
 end
+-- [FIX Lv90] Helper strip level tag dung chung cho moi noi, tranh pattern cu
+-- bo sot format "<Lv.90>" (khong co space sau dau cham) dan den khong tim thay mob.
+local function _stripLvTag(s)
+	return (tostring(s):gsub(" ?%p?Lv%. ?%d+%p?", ""))
+end
+-- [FIX Lv90] Helper so sanh ten mob: strip Lv tag (<Lv.X>, [Lv.X]...) ra KHOI
+-- CA HAI VE (ten enemy trong workspace.Enemies va ten truyen vao), sau do so
+-- sanh khop chinh xac hoac containment fuzzy. Cach cu o.Name == Q khong bao
+-- gio match vi enemy that thuong co dang "Snow Bandit <Lv.90>". Khi khong tim
+-- duoc mob, FarmMethod di theo nhanh DetectPartSpawnMob -> neu spawnpoint
+-- regex cung sai -> vong lap teleport vo tan -> "full" man hinh.
+local function _nameMatches(actual, target)
+	if actual == target then
+		return true
+	end
+	if type(actual) ~= "string" or type(target) ~= "string" then
+		return false
+	end
+	local a = _stripLvTag(actual)
+	local t = _stripLvTag(target)
+	return a == t
+		or string.find(a, t, 1, true)
+		or string.find(t, a, 1, true)
+end
+local function _mobInList(name, list)
+	if typeof(list) == "table" then
+		for _, nm in ipairs(list) do
+			if _nameMatches(name, nm) then
+				return true
+			end
+		end
+	end
+	return false
+end
 function DetectMob(Q)
 	local d, I = 1 / 0
+	local HRP = nil
+	pcall(function()
+		HRP = game:GetService("Players").LocalPlayer.Character.HumanoidRootPart
+	end)
+	if not HRP then
+		return nil
+	end
 	for _, o in pairs(game.Workspace.Enemies:GetChildren()) do
-		if (typeof(Q) == "table" and (table.find(Q, o.Name)) or o.Name == Q) and (IsMobAlive(o)) then
-			_ = (
-				o.HumanoidRootPart.Position - game:GetService("Players").LocalPlayer.Character.HumanoidRootPart.Position
-			).magnitude
-			if _ < d then
-				d, I = _, o
+		local match = false
+		if typeof(Q) == "table" then
+			match = _mobInList(o.Name, Q)
+		elseif Q then
+			match = _nameMatches(o.Name, Q)
+		end
+		if match and IsMobAlive(o) and o:FindFirstChild("HumanoidRootPart") then
+			local dist = (o.HumanoidRootPart.Position - HRP.Position).Magnitude
+			if dist < d then
+				d, I = dist, o
 			end
 		end
 	end
@@ -4213,13 +4281,25 @@ end
 function CheckNameBoss(Q)
 	local d, I, _ = next, game.ReplicatedStorage:GetChildren()
 	for o, o in d, I, _ do
-		if (typeof(Q) == "table" and (table.find(Q, o.Name)) or o.Name == Q) and (IsMobAlive(o)) then
+		local match = false
+		if typeof(Q) == "table" then
+			match = _mobInList(o.Name, Q)
+		elseif Q then
+			match = _nameMatches(o.Name, Q)
+		end
+		if match and IsMobAlive(o) then
 			return o
 		end
 	end
 	d, _, I = next, game.Workspace.Enemies:GetChildren()
 	for o, o in d, _, I do
-		if (typeof(Q) == "table" and (table.find(Q, o.Name)) or o.Name == Q) and (IsMobAlive(o)) then
+		local match = false
+		if typeof(Q) == "table" then
+			match = _mobInList(o.Name, Q)
+		elseif Q then
+			match = _nameMatches(o.Name, Q)
+		end
+		if match and IsMobAlive(o) then
 			return o
 		end
 	end
@@ -4228,8 +4308,8 @@ getgenv().TableMobSpawn = {}
 spawn(function()
 	for Q, Q in pairs(getnilinstances()) do
 		if
-			if Q:GetAttribute("DisplayName") and (string.find(Q:GetAttribute("DisplayName"), "Lv."))
-				then (Q:GetAttribute("DisplayName"):gsub(" %pLv. %d+%p", ""))
+			if Q:GetAttribute("DisplayName") and (string.find(Q:GetAttribute("DisplayName"), "Lv%."))
+				then _stripLvTag(Q:GetAttribute("DisplayName"))
 				else nil
 		then
 			table.insert(TableMobSpawn, Q)
@@ -4237,8 +4317,8 @@ spawn(function()
 	end
 	for Q, Q in pairs(game:GetService("Workspace")._WorldOrigin.EnemySpawns:GetChildren()) do
 		if
-			if Q:GetAttribute("DisplayName") and (string.find(Q:GetAttribute("DisplayName"), "Lv."))
-				then (Q:GetAttribute("DisplayName"):gsub(" %pLv. %d+%p", ""))
+			if Q:GetAttribute("DisplayName") and (string.find(Q:GetAttribute("DisplayName"), "Lv%."))
+				then _stripLvTag(Q:GetAttribute("DisplayName"))
 				else nil
 		then
 			table.insert(TableMobSpawn, Q)
@@ -4261,13 +4341,13 @@ function GetMobSpawnList()
 	return list
 end
 function getcenter(Q)
-	if string.find(Q, "Lv.") then
-		name1 = Q:gsub(" %pLv. %d+%p", "")
+	if string.find(Q, "Lv%.") then
+		name1 = _stripLvTag(Q)
 	end
 	local d
 	local I = 0
 	for _, o in pairs(GetMobSpawnList()) do
-		_ = if string.find(o.Name, "Lv.") then (o.Name:gsub(" %pLv. %d+%p", "")) else nil
+		_ = if string.find(o.Name, "Lv%.") then (_stripLvTag(o.Name)) else nil
 		if o:IsA("Part") and (_ and _ == Q or Q == o.Name or name1 and o.Name == name1) then
 			if d == nil then
 				d, I = o.Position, I + 1
@@ -4283,9 +4363,9 @@ function getcenter(Q)
 	return CFrame.new(d)
 end
 function DetectPartMobBring(Q, d, I, _)
-	local o, V = {}, if string.find(Q, "Lv.") then (Q:gsub(" %pLv. %d+%p", "")) else nil
+	local o, V = {}, if string.find(Q, "Lv%.") then (_stripLvTag(Q)) else nil
 	for N, y in pairs(GetMobSpawnList()) do
-		N = if string.find(y.Name, "Lv.") then (y.Name:gsub(" %pLv. %d+%p", "")) else nil
+		N = if string.find(y.Name, "Lv%.") then (_stripLvTag(y.Name)) else nil
 		if y:IsA("Part") and (N and N == Q or Q == y.Name or V and y.Name == V) then
 			table.insert(o, y)
 		end
@@ -4950,11 +5030,52 @@ getgenv().__BFAcceptedQuest = nil
 local QUEST_EXCLUDE = { "BartiloQuest", "Trainees", "MarineQuest", "CitizenQuest" }
 
 -- ============================================================
--- CheckQuest: fall-through 4 tang, KHONG return false som tu QuestController
+-- CheckQuest: uu tien doc TrackedQuestFrame (UI mac dinh cua game)
+-- sau do fallback qua QuestController / Main.Quest / GuideModule.
+-- [FIX Lv90] UI TrackedQuestFrame la nguon DUY NHAT dang tin cay sau update.
+-- Cac tang cu (QuestController, Main.Quest) co the stale/khong update dung.
 -- ============================================================
+local function _readTrackedQuest()
+	-- Doc text tu UI TrackedQuestFrame cua game (PlayerGui)
+	local ok, text = pcall(function()
+		local pg = t and t.PlayerGui
+		if not pg then return nil end
+		-- Thu nhieu duong dan vi doi khi doi ten Frame
+		local frame = pg:FindFirstChild("TrackedQuestFrame", true)
+		if not frame then return nil end
+		-- Thu nhieu vi tri text (cac update game co the doi structure)
+		local lbl = frame:FindFirstChild("header", true)
+				and frame.header:FindFirstChild("textLabel", true)
+				and frame.header.textLabel:FindFirstChild("textLabel", true)
+		if lbl and lbl:IsA("TextLabel") then
+			return lbl.Text
+		end
+		-- Fallback: tim TextLabel dau tien ben trong frame co chua "Defeat" hoac ten mob
+		for _, tl in ipairs(frame:GetDescendants()) do
+			if tl:IsA("TextLabel") and tl.Text and #tl.Text > 0 then
+				return tl.Text
+			end
+		end
+		return nil
+	end)
+	return ok and text or nil
+end
 function CheckQuest(X)
 	local ok, result = pcall(function()
 		local now = tick()
+
+		-- [FIX Lv90] UU TIEN SO 1: TrackedQuestFrame (UI mac dinh cua game)
+		-- Day la noi game hien quest dang nhan (VD: "Defeat 8 Snow Bandit")
+		local tracked = _readTrackedQuest()
+		if tracked and tracked ~= "" then
+			if not X or X == "" then
+				return true
+			end
+			if string.find(tracked, tostring(X), 1, true) then
+				return true
+			end
+			-- Khong return false o day de cho phep fall-through neu khong match
+		end
 
 		-- 0) Quest vua accept trong 15s → tin luon
 		local aq = getgenv().__BFAcceptedQuest
@@ -4962,7 +5083,7 @@ function CheckQuest(X)
 			if not X or X == "" then
 				return true
 			end
-			if aq.mob == X or string.find(tostring(aq.mob), tostring(X), 1, true) then
+			if string.find(tostring(aq.mob), tostring(X), 1, true) then
 				return true
 			end
 		end
@@ -4972,15 +5093,12 @@ function CheckQuest(X)
 			if not X or X == "" then
 				return true
 			end
-			if QuestController.CurrentQuest == X
-				or string.find(tostring(QuestController.CurrentQuest), tostring(X), 1, true)
-			then
+			if string.find(tostring(QuestController.CurrentQuest), tostring(X), 1, true) then
 				return true
 			end
-			-- KHONG return false — fall-through UI/GuideModule
 		end
 
-		-- 2) UI Main.Quest
+		-- 2) UI Main.Quest (cua script)
 		local pg = t.PlayerGui
 		local q = pg:FindFirstChild("Main") and pg.Main:FindFirstChild("Quest")
 		if q and q.Visible then
@@ -5003,7 +5121,7 @@ function CheckQuest(X)
 				return true
 			end
 			for name in next, GuideModule.Data.QuestData.Task do
-				if name == X or string.find(tostring(name), tostring(X), 1, true) then
+				if string.find(tostring(name), tostring(X), 1, true) then
 					return true
 				end
 			end
@@ -5049,15 +5167,34 @@ function GetBestQuest()
 	local bestLevelReq = -1
 	local bestRnq, bestTaskName, bestRidq = nil, nil, nil
 	local lv = t.Data.Level.Value
+	-- [FIX Lv90] Luon thu require lai QuestsModule neu cache dang rong (co the
+	-- script chay truoc khi ReplicatedStorage.Quests duoc tao, dan den mat quest
+	-- ngay khi len level moi nhu Lv90 -> GetBestQuest() tra nil -> farm dung yen).
 	local cache = QuestController.CachedQuestData
-	if (not cache or next(cache) == nil) and QuestsModule then
-		cache = QuestsModule
-		QuestController.CachedQuestData = QuestsModule
+	if not cache or next(cache) == nil then
+		local fresh = safeRequire("Quests", { "Quests" }, "QuestData", { "QuestData" })
+		if fresh and next(fresh) ~= nil then
+			QuestsModule = fresh
+			H = fresh
+			QuestController.CachedQuestData = fresh
+			cache = fresh
+		elseif QuestsModule and next(QuestsModule) ~= nil then
+			cache = QuestsModule
+		end
 	end
-	for rnq, v in next, cache do
+	for rnq, v in next, (cache or {}) do
 		if not table.find(QUEST_EXCLUDE, tostring(rnq)) and typeof(v) == "table" then
 			for ridq, ct in next, v do
-				if typeof(ct) == "table" and ct.LevelReq and ct.Task and ct.LevelReq >= 0 and lv >= ct.LevelReq then
+				-- [FIX Lv90] Check type(ct.LevelReq) == "number" de tranh pcall crash
+				-- khi gap entry dac biet (vd quest Event/Progress cos LevelReq la table),
+				-- lua se throw "attempt to compare number with table" -> out loop -> nil.
+				if
+					typeof(ct) == "table"
+					and ct.Task
+					and type(ct.LevelReq) == "number"
+					and ct.LevelReq >= 0
+					and lv >= ct.LevelReq
+				then
 					for O, taskValue in next, ct.Task do
 						if type(taskValue) == "number" and taskValue > 1 and ct.LevelReq >= bestLevelReq then
 							bestLevelReq = ct.LevelReq
@@ -5081,14 +5218,54 @@ function GetQuest()
 	local msn, nq, idq
 	local min = 0
 
+	-- [FIX Lv90+] Fallback mapping cho cac quest hardcoded.
+	-- CheckPlaceId3 = First Sea (Old World): max ~725 (Fountain City)
+	-- CheckPlaceId2 = Second Sea (New World): 700-1500
+	-- CheckPlaceId  = Third Sea: 1500+
 	if Level >= 275 and Level < 300 then
-		nq, msn, idq = "ColosseumQuest", "Togga Warrior", 1
+		-- Colosseum Togga Warrior (First Sea)
+		if game.PlaceId == getgenv().CheckPlaceId3 then
+			nq, msn, idq = "ColosseumQuest", "Togga Warrior", 1
+		end
 	elseif Level >= 1450 and game.PlaceId == getgenv().CheckPlaceId2 then
 		nq, msn, idq = "ForgottenQuest", "Water Fighter", 2
-	elseif Level >= 700 and game.PlaceId == getgenv().CheckPlaceId3 then
+	elseif Level >= 700 and Level < 750 and game.PlaceId == getgenv().CheckPlaceId3 then
+		-- Fountain City Galley Captain (First Sea, mob 725 - mob cuoi First Sea)
 		nq, msn, idq = "FountainQuest", "Galley Captain", 2
-	else
+	end
+	-- Neu chua co (cac level con lai, hoac da doi sea thanh cong),
+	-- dung GetBestQuest tu QuestsModule dong.
+	if not nq then
 		min, nq, msn, idq = GetBestQuest()
+	end
+	-- [FIX Lv90] Fallback cung khi QuestsModule thieu data / chua load kip.
+	-- Khi GetBestQuest() tra nil -> takeQuest() bao "Khong xac dinh duoc quest"
+	-- -> DetectMob(nil) luon = nil -> vong lap di chuyen vo tan -> "full man hinh".
+	if not nq then
+		if game.PlaceId == getgenv().CheckPlaceId3 then -- First Sea
+			if Level >= 1 and Level < 10 then
+				nq, msn, idq = "BanditQuest", "Bandit", 1
+			elseif Level >= 10 and Level < 20 then
+				nq, msn, idq = "JungleQuest", "Monkey", 1
+			elseif Level >= 20 and Level < 30 then
+				nq, msn, idq = "JungleQuest", "Gorilla", 2
+			elseif Level >= 30 and Level < 40 then
+				nq, msn, idq = "PirateQuest", "Pirate", 1
+			elseif Level >= 40 and Level < 55 then
+				nq, msn, idq = "PirateQuest", "Brute", 2
+			elseif Level >= 55 and Level < 70 then
+				nq, msn, idq = "DesertQuest", "Desert Bandit", 1
+			elseif Level >= 70 and Level < 85 then
+				nq, msn, idq = "DesertQuest", "Desert Officer", 2
+			elseif Level >= 85 and Level < 100 then
+				-- Frozen Village - Snow Bandit Lv.90 (chinh la moc user bao loi)
+				nq, msn, idq = "SnowQuest", "Snow Bandit", 1
+			elseif Level >= 100 and Level < 120 then
+				nq, msn, idq = "SnowQuest", "Snowman", 2
+			elseif Level >= 120 and Level < 135 then
+				nq, msn, idq = "FrozenQuest", "Yeti", 1
+			end
+		end
 	end
 
 	local q = {}
@@ -5212,6 +5389,119 @@ local function findQuestPoint(questName)
 	return nil
 end
 
+-- [FIX Lv90] Ham scan NPC quest-giver TRUC TIEP trong workspace:
+-- Tim tat ca Model/Humanoid/Part co ProximityPrompt hoac ClickDetector (dau hieu NPC nhan quest),
+-- uu tien NPC co ten chua key/mob, hoac NPC gan nhat voi player ma co nhiem vu phu hop level.
+-- Cach cu phu thuoc vao toa do cung / GuideModule -> sai toa do / doi NPC name -> script bay ra bien.
+local function _extractLevelFromName(str)
+	if type(str) ~= "string" then return nil end
+	local s = str:match("Lv%.?%s*(%d+)") or str:match("Level%s*(%d+)")
+	if s then return tonumber(s) end
+	return nil
+end
+local function findQuestNpcInWorld(targetQuest, targetMob)
+	local character = t.Character
+	local HRP = character and character:FindFirstChild("HumanoidRootPart")
+	if not HRP then return nil end
+	local bestPos, bestNpcName, bestDist, bestLvlMatch = nil, nil, math.huge, math.huge
+	local myLvl = t.Data.Level.Value
+	-- Helper: model/part nay co phai NPC quest khong? (co prompt/clickdetector)
+	local function isQuestNpc(obj)
+		if not obj then return false end
+		for _, desc in ipairs(obj:GetDescendants()) do
+			if desc:IsA("ProximityPrompt") or desc:IsA("ClickDetector") then
+				return true
+			end
+		end
+		-- NPC thuong la Model co Humanoid, cha la Workspace._WorldOrigin hoac Map
+		if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
+			local root = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
+			if root then return true end
+		end
+		return false
+	end
+	local function getNpcRoot(obj)
+		if obj:IsA("Model") then
+			return obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
+		elseif obj:IsA("BasePart") then
+			return obj
+		end
+		return nil
+	end
+	local function scoreNpc(root, name)
+		local dist = (root.Position - HRP.Position).Magnitude
+		-- Bo qua NPC qua xa (khac dao)
+		if dist > 8000 then return end
+		local nm = string.lower(name or "")
+		local tqm = targetMob and string.lower(tostring(targetMob)) or ""
+		local tqn = targetQuest and string.lower(tostring(targetQuest)) or ""
+		local mobMatch = (tqm ~= "" and (string.find(nm, tqm, 1, true) or string.find(tqm, nm, 1, true)))
+		local questMatch = (tqn ~= "" and (string.find(nm, tqn, 1, true) or string.find(tqn, nm, 1, true)))
+		local lvl = _extractLevelFromName(name)
+		local lvlMatch = 0
+		if lvl then
+			-- Uu tien NPC co level <= level player va gan nhat
+			if lvl > myLvl + 50 then return end -- qua cao hon level
+			lvlMatch = math.abs(lvl - myLvl)
+		end
+		-- Score: uu tien mob/quest match, sau do level gan, sau do khoang cach
+		local score = dist
+		if mobMatch then score = score - 1e9 end
+		if questMatch then score = score - 1e9 end
+		if lvl then score = score + lvlMatch * 10 end
+		if score < bestDist then
+			bestDist = score
+			bestPos = root.CFrame
+			bestNpcName = name
+		end
+	end
+	-- Scan Map (NPCs thuong nam trong workspace.Map.<Island>)
+	local function scan(parent)
+		if not parent then return end
+		for _, child in ipairs(parent:GetChildren()) do
+			pcall(function()
+				if isQuestNpc(child) then
+					local root = getNpcRoot(child)
+					if root then scoreNpc(root, child.Name) end
+				end
+				-- Recursion cho cac subfolder (vd Map.Frozen Village, Map.Desert)
+				if child:IsA("Model") or child:IsA("Folder") then
+					scan(child)
+				end
+			end)
+		end
+	end
+	pcall(scan, workspace:FindFirstChild("Map", true))
+	pcall(scan, workspace._WorldOrigin)
+	-- Scan NPCList tu GuideModule neu khong tim thay trong world
+	if not bestPos then
+		local list = getNPCList()
+		for key, v in next, (list or {}) do
+			if typeof(v) == "table" and v.Position then
+				local root = nil
+				pcall(function()
+					if typeof(v.Position) == "Vector3" then root = CFrame.new(v.Position)
+					elseif typeof(v.Position) == "CFrame" then root = v.Position end
+				end)
+				if root then
+					local dist = (root.Position - HRP.Position).Magnitude
+					if dist < 8000 then
+						local nm = tostring(key) .. " " .. tostring(v.Name or "")
+						if targetMob and string.find(string.lower(nm), string.lower(tostring(targetMob)), 1, true)
+							or (targetQuest and v.InternalQuestName == targetQuest) then
+							if dist < bestDist then
+								bestDist = dist
+								bestPos = root
+								bestNpcName = tostring(key)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return bestPos, bestNpcName
+end
 function CFrameQuest()
 	getgenv().questpoint = {}
 	local list = getNPCList()
@@ -5222,8 +5512,6 @@ function CFrameQuest()
 			if questName and point then
 				getgenv().questpoint[tostring(questName)] = point
 			end
-			-- A few GuideModule revisions use the quest name as the table key
-			-- and omit InternalQuestName from the value.
 			if
 				not questName
 				and type(key) == "string"
@@ -5234,7 +5522,6 @@ function CFrameQuest()
 			end
 		end
 	end
-	getgenv().questpoint.SkyExp1Quest = CFrame.new(-7857.28516, 5544.34033, -382.321503)
 end
 
 -- ============================================================
@@ -5375,6 +5662,33 @@ function takeQuest()
 		))
 		getgenv().__BFAcceptedQuest = nil
 		pcall(function() QuestController:Reset() end)
+		-- [FIX Lv90] Clear toan bo cache cu: questpoint (vi tri NPC) va
+		-- TableMobSpawn (spawner) va reload GuideModule/QuestsModule de tranh
+		-- giu du lieu cu cua dao/quest truoc sau khi levelup.
+		pcall(function()
+			local gm = safeRequire("GuideModule", { "GuideModule" }, "Guide", { "Guide" })
+			if gm then GuideModule = gm; Z = gm end
+			local qm = safeRequire("Quests", { "Quests" }, "QuestData", { "QuestData" })
+			if qm then QuestsModule = qm; H = qm; QuestController.CachedQuestData = qm end
+			getgenv().questpoint = {}
+			CFrameQuest()
+			-- Reset spawner cache de re-scan
+			TableMobSpawn = {}
+			for _, inst in pairs(getnilinstances()) do
+				pcall(function()
+					if inst:GetAttribute("DisplayName") and string.find(inst:GetAttribute("DisplayName"), "Lv%.") then
+						table.insert(TableMobSpawn, inst)
+					end
+				end)
+			end
+			pcall(function()
+				for _, inst in pairs(game:GetService("Workspace")._WorldOrigin.EnemySpawns:GetChildren()) do
+					if inst:GetAttribute("DisplayName") and string.find(inst:GetAttribute("DisplayName"), "Lv%.") then
+						table.insert(TableMobSpawn, inst)
+					end
+				end
+			end)
+		end)
 	end
 
 	if CheckQuest(q.NameMonster) and not forceRetry then
@@ -5383,10 +5697,17 @@ function takeQuest()
 	end
 
 	local questPos, questKey, questNpcName = getQuestPositionEx()
+	-- [FIX Lv90] Fallback: scan NPC truc tiep trong Workspace (proximity/click)
+	-- khi GuideModule khong co du lieu (thuong xay ra khi moi update game,
+	-- NPC list bi doi ten/vi tri). Cach cu return nil -> farm dung yen.
+	if not questPos then
+		questPos, questKey = findQuestNpcInWorld(q.NameQuest, q.NameMonster)
+		questNpcName = questKey
+	end
 	if not questPos then
 		if tick() - (getgenv().__LvQuestWarn or 0) > 10 then
 			getgenv().__LvQuestWarn = tick()
-			warn("[TakeQuest] Quest data chua co pos cho " .. tostring(q.NameQuest) .. " | mob=" .. tostring(q.NameMonster) .. " -> co the dao tiep theo chua co trong GuideModule.NPCList luc nay")
+			warn("[TakeQuest] Khong tim thay NPC quest cho Lv." .. tostring(t.Data.Level.Value) .. " quest=" .. tostring(q.NameQuest) .. " mob=" .. tostring(q.NameMonster) .. " | dang tim tren workspace...")
 		end
 		lastTakeQuest = tick()
 		return
@@ -5408,11 +5729,49 @@ function takeQuest()
 		return
 	end
 
-	-- Bay toi NPC neu xa (Banana: toTarget)
-	if (questPos - HRP.Position).Magnitude > 20 then
-		toTarget(CFrame.new(questPos) * CFrame.new(0, 4, 2), true)
+	local distToNpc = (questPos - HRP.Position).Magnitude
+	-- [FIX Lv90] First/Second Sea cac dao cach nhau < 10000 studs. De tranh tinh
+	-- trang toTarget/tween bi block boi setting nao do (Use Portal, Teleport Y,
+	-- Reset Teleport...), TELEPORT THANG TRUC TIEP bang H.CFrame luon luon khi
+	-- khoang cach < 10000 (khong phai Third Sea special travel).
+	-- Chi khi > 10000 (vd di chuyen giua cac Sea) moi dung toTarget co special handling.
+	local destCF = CFrame.new(questPos) * CFrame.new(0, 4, 0)
+	if distToNpc > 12 then
+		if distToNpc <= 10000 then
+			pcall(TweenManager and TweenManager.CancelCurrent)
+			pcall(I)
+			-- Bat noclip + fly force truoc khi teleport
+			pcall(function() getgenv().noclip = true end)
+			if not HRP:FindFirstChild("FloatForce") then
+				pcall(y, HRP)
+			end
+			HRP.CFrame = destCF
+			return
+		end
+		-- Cach rat xa (cross-sea): dung toTarget co sea-handling
+		toTarget(destCF, true)
 		return
 	end
+
+	-- [FIX Lv90] Khi dung sat NPC, thu KICH HOAT ProximityPrompt/ClickDetector
+	-- cua NPC do TRUOC khi goi StartQuest remote. Day la cach nhan quest moi
+	-- cua Blox Fruits sau cac update gan day (thay vi chi goi StartQuest
+	-- khong can o gan NPC). Sau do thu goi remote nhu cu de phong truong hop NPC cu.
+	pcall(function()
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("ProximityPrompt") then
+				local parent = obj.Parent
+				if parent and (parent.Position - HRP.Position).Magnitude < 15 then
+					pcall(function() fireproximityprompt(obj) end)
+				end
+			elseif obj:IsA("ClickDetector") then
+				local parent = obj.Parent
+				if parent and parent:IsA("BasePart") and (parent.Position - HRP.Position).Magnitude < 10 then
+					pcall(function() fireclickdetector(obj) end)
+				end
+			end
+		end
+	end)
 
 	-- Gan NPC → StartQuest + cache 15s
 	getgenv().__BFAcceptedQuest = { mob = q.NameMonster, time = tick() }
@@ -5549,7 +5908,7 @@ function GetMonsterName()
 		end
 	end
 	for _, v in next, _v do
-		local name = v:gsub(" %pLv%. ?%d+%p", "")
+		local name = _stripLvTag(v)
 		if QuestController.CurrentQuest == name then
 			return name
 		end
@@ -5557,7 +5916,7 @@ function GetMonsterName()
 	local uiName = getgenv().NameMobQuest
 	if uiName and uiName ~= "" then
 		for _, v in next, _v do
-			local name = v:gsub(" %pLv%. ?%d+%p", "")
+			local name = _stripLvTag(v)
 			if name == uiName then
 				return name
 			end
@@ -5574,12 +5933,19 @@ end
 
 function DetectPartSpawnMob(V, H)
 	local function B(C)
-		return C:gsub(" %p?Lv%.? %d+%p?", "")
+		-- [FIX Lv90] Regex cu " %pLv. %d+%p" chi match "<Lv. 90>" (co dau cach sau
+		-- Lv. VA co punctuation 2 ben). Spawner o Frozen Village (Snow Bandit)
+		-- thuong co format "<Lv.90>" hoac "[Lv.90]" (KHONG co cach sau dau .)
+		-- -> khong match -> DetectPartSpawnMob return nil -> DetectMob(f) = nil luon
+		-- -> lap di lap lai teleport toi spawnpoint khong ton tai -> farm "dung yen".
+		-- Dung pattern ro rang hon: space (optional punct) "Lv." (optional space)
+		-- so (optional punct)
+		return (tostring(C):gsub(" ?%p?Lv%. ?%d+%p?", ""))
 	end
-	local C = string.find(V, "Lv.") and (B(V)) or V
+	local C = string.find(V, "Lv%.") and (B(V)) or V
 	for J, F in pairs(TableMobSpawn) do
 		if F:IsA("Part") then
-			J = string.find(F.Name, "Lv.") and (B(F.Name)) or F.Name
+			J = string.find(F.Name, "Lv%.") and (B(F.Name)) or F.Name
 			if (J == V or J == C) and (not H or not F:FindFirstChild("Ignored")) then
 				return F
 			end
@@ -5587,7 +5953,7 @@ function DetectPartSpawnMob(V, H)
 	end
 	for J, F in pairs(workspace._WorldOrigin.EnemySpawns:GetChildren()) do
 		if F:IsA("Part") then
-			J = string.find(F.Name, "Lv.") and (B(F.Name)) or F.Name
+			J = string.find(F.Name, "Lv%.") and (B(F.Name)) or F.Name
 			if (J == V or J == C) and (not H or not F:FindFirstChild("Ignored")) then
 				table.insert(TableMobSpawn, F)
 				return F
@@ -5596,7 +5962,7 @@ function DetectPartSpawnMob(V, H)
 	end
 	for J, F in pairs(getnilinstances()) do
 		if F:IsA("Part") then
-			J = string.find(F.Name, "Lv.") and (B(F.Name)) or F.Name
+			J = string.find(F.Name, "Lv%.") and (B(F.Name)) or F.Name
 			if (J == V or J == C) and (not H or not F:FindFirstChild("Ignored")) then
 				table.insert(TableMobSpawn, F)
 				return F
@@ -9169,9 +9535,9 @@ function TableMob()
 				y[Y.Name] = false
 			end
 		end
-		if string.find(game:GetService("Workspace")._WorldOrigin.EnemySpawns:GetChildren()[1].Name, "Lv.") then
+		if string.find(game:GetService("Workspace")._WorldOrigin.EnemySpawns:GetChildren()[1].Name, "Lv%.") then
 			for Y, Y in pairs(getnilinstances()) do
-				if table.find(P, tostring(Y.Name:gsub(" %pLv. %d+%p", ""))) and y[Y.Name] == nil then
+				if table.find(P, tostring(_stripLvTag(Y.Name))) and y[Y.Name] == nil then
 					y[Y.Name] = false
 				end
 			end
@@ -9203,7 +9569,7 @@ function FarmSelectMob()
 	end
 	local y = {}
 	for P, Y in next, Settings["Select Mob"], nil do
-		Y = P:gsub(" %pLv. %d+%p", "")
+		Y = _stripLvTag(P)
 		table.insert(y, Y)
 	end
 	local P = DetectMob(y)
