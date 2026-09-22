@@ -242,7 +242,7 @@ NameMaterials = {
 	["Demonic Wisp"] = { "Demonic Soul" },
 	["Dragon Scale"] = { "Dragon Crew Archer", "Dragon Crew Warrior" },
 	["Conjured Cocoa"] = { "Cocoa Warrior", "Chocolate Bar Battler" },
-	Bones = { "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy" },
+	Bones = { "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy", "Possessed Mummy" },
 }
 TableMaterials = {}
 for g, G in next, NameMaterials, nil do
@@ -4856,9 +4856,14 @@ FarmingMaterialSection.CreateToggle(
 local V, N, y, P, e, Y =
 	{ "BartiloQuest", "Trainees", "MarineQuest", "CitizenQuest" },
 	{},
-	{ "Baking Staff", "Head Baker", "Cake Guard", "Cookie Crafter" },
+	-- Cake Island mobs.  The last two are required for the 500-kill
+	-- counter used to summon Cake Prince; farming only CakeQuest2 mobs
+	-- could leave the Katakuri counter stuck when those mobs were absent.
+	{ "Baking Staff", "Head Baker", "Cake Guard", "Cookie Crafter", "Cocoa Warrior", "Chocolate Bar Battler" },
 	{ "Cocoa Warrior", "Chocolate Bar Battler", "Candy Rebel", "Sweet Thief" },
-	{ "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy" },
+	-- The live game has used both spellings of this NPC in different
+	-- versions.  Keep both so a renamed spawn does not stop the farm loop.
+	{ "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy", "Possessed Mummy" },
 	{ "Isle Champion", "Serpent Hunter", "Skull Slayer", "Sun-kissed Warrior" }
 getgenv().NameMobQuest = ""
 getgenv().NameQuest = ""
@@ -5173,12 +5178,60 @@ function DoubleQuest()
 	return B
 end
 
+-- Convert the position formats used by the different GuideModule builds.
+-- Older builds expose Position as a Vector3, while newer builds may expose
+-- the same value as CFrame.  CFrame.new(CFrame) is not valid, so normalise it
+-- before putting it in questpoint.
+local function questEntryCFrame(entry)
+	if type(entry) ~= "table" then
+		return nil
+	end
+	local value = entry.Position or entry.CFrame or entry.Pos
+	if typeof(value) == "CFrame" then
+		return value
+	elseif typeof(value) == "Vector3" then
+		return CFrame.new(value)
+	end
+	return nil
+end
+
+local function findQuestPoint(questName)
+	local points = getgenv().questpoint
+	if type(points) ~= "table" or not questName then
+		return nil
+	end
+	if points[questName] then
+		return points[questName]
+	end
+	local wanted = string.lower(tostring(questName))
+	for name, point in pairs(points) do
+		if string.lower(tostring(name)) == wanted then
+			return point
+		end
+	end
+	return nil
+end
+
 function CFrameQuest()
 	getgenv().questpoint = {}
 	local list = getNPCList()
-	for C, J in next, list do
-		if type(J) == "table" and J.InternalQuestName and J.Position then
-			getgenv().questpoint[J.InternalQuestName] = CFrame.new(J.Position)
+	for key, entry in next, list do
+		if type(entry) == "table" then
+			local questName = entry.InternalQuestName or entry.QuestName or entry.NameQuest
+			local point = questEntryCFrame(entry)
+			if questName and point then
+				getgenv().questpoint[tostring(questName)] = point
+			end
+			-- A few GuideModule revisions use the quest name as the table key
+			-- and omit InternalQuestName from the value.
+			if
+				not questName
+				and type(key) == "string"
+				and point
+				and string.find(string.lower(key), "quest", 1, true)
+			then
+				getgenv().questpoint[key] = point
+			end
 		end
 	end
 	getgenv().questpoint.SkyExp1Quest = CFrame.new(-7857.28516, 5544.34033, -382.321503)
@@ -5591,28 +5644,74 @@ function TeleportSpawnMob(V)
 	end
 end
 function QuestBoneAndkatakuri(V, H)
-	local B = getgenv().questpoint[V]
+	-- Do not index questpoint directly: GuideModule can change the casing of
+	-- the internal quest name between game updates.
+	local B = findQuestPoint(V)
 	if not B then
 		CFrameQuest()
-		task.wait(1.5)
-		B = getgenv().questpoint[V]
+		task.wait(0.15)
+		B = findQuestPoint(V)
 		if not B then
-			return
+			if tick() - (getgenv().__SpecialQuestWarnAt or 0) > 10 then
+				getgenv().__SpecialQuestWarnAt = tick()
+				warn("[SpecialFarm] Khong tim thay vi tri quest " .. tostring(V) .. ". Farm se thu lai khi GuideModule san sang.")
+			end
+			return false
 		end
 	end
+	if typeof(B) == "Vector3" then
+		B = CFrame.new(B)
+	end
+	if typeof(B) ~= "CFrame" then
+		return false
+	end
+
 	local C, J =
 		t.Character and (t.Character:FindFirstChild("HumanoidRootPart")),
 		t.Character and (t.Character:FindFirstChildOfClass("Humanoid"))
-	if not C or not J then
-		return
+	if not C or not J or J.Health <= 0 then
+		return false
 	end
+
 	if (B.Position - C.Position).Magnitude <= 8 then
-		if J.Health > 0 then
-			CommF:InvokeServer("StartQuest", V, H)
-			task.wait(0.5)
+		-- The old code started the quest but never updated the local quest
+		-- cache.  On clients where QuestUpdate/UI is delayed, FarmMethod called
+		-- this function forever and never reached DetectMob, so both Bone and
+		-- Katakuri farming appeared to be broken.
+		local now = tick()
+		local lastAttempt = getgenv().__SpecialQuestAttempt
+		if
+			type(lastAttempt) == "table"
+			and lastAttempt.quest == V
+			and now - (lastAttempt.time or 0) < 1
+		then
+			return true
 		end
+		getgenv().__SpecialQuestAttempt = { quest = V, time = now }
+		local ok, err = pcall(function()
+			CommF:InvokeServer("StartQuest", V, H)
+		end)
+		if not ok then
+			warn("[SpecialFarm] StartQuest loi (" .. tostring(V) .. "): " .. tostring(err))
+			return false
+		end
+
+		-- Treat a successful remote call as accepted for a short grace period.
+		-- This prevents a stale Quest UI from blocking the farming loop, while
+		-- the timeout still allows a retry if the server actually rejected it.
+		getgenv().__BFAcceptedQuest = {
+			mob = V == "CakeQuest2" and "Cake Guard" or "Demonic Soul",
+			quest = V,
+			id = H,
+			time = tick(),
+		}
+		getgenv().NameQuest = V
+		getgenv().IDQuest = H
+		task.wait(0.5)
+		return true
 	else
 		toTarget(B * CFrame.new(0, 4, 2), true)
+		return false
 	end
 end
 local V = { "Control-Control", "Buddha-Buddha", "Diamond-Diamond", "Falcon-Falcon" }
@@ -5952,13 +6051,18 @@ function SpecialHop(C)
 	end
 end
 function FarmMethod()
-	local f, V, H = Settings["Select Method Farm"]
+	local selectedMethod = Settings["Select Method Farm"]
+	local f, V, H = selectedMethod
 	local C, J = 9999, 2
-	if f == "Farm Katakuri" then
+	local isSpecialQuestFarm =
+		selectedMethod == "Farm Katakuri"
+		or selectedMethod == "Farm Bones"
+		or selectedMethod == "Farm Tyrant of the Skies"
+	if selectedMethod == "Farm Katakuri" then
 		C, V, H = 2275, y, "CakeQuest2"
-	elseif f == "Farm Bones" then
+	elseif selectedMethod == "Farm Bones" then
 		C, V, H = 2050, e, "HauntedQuest2"
-	elseif f == "Farm Tyrant of the Skies" then
+	elseif selectedMethod == "Farm Tyrant of the Skies" then
 		C, V, H = 2575, Y, "TikiQuest3"
 	else
 		V = if f == "Aura Farm" and (DetectMobAura()) then { DetectMobAura() } else V
@@ -5997,20 +6101,28 @@ function FarmMethod()
 	else
 		hasQuest = CheckQuest() == true
 	end
+
+	-- Special farms use a quest name/ID directly instead of GetQuest().  The
+	-- previous code checked typeof(f) == "string" first, but Katakuri/Bone
+	-- targets are tables, so a missing quest skipped the quest-start path and
+	-- could leave the farm waiting forever.  Start the special quest before
+	-- farming whenever its dedicated toggle is enabled.
+	if
+		not hasQuest
+		and isSpecialQuestFarm
+		and t.Data.Level.Value >= C
+		and Settings["Auto Quest [Katakuri/Bone/Tyrant]"]
+	then
+		QuestBoneAndkatakuri(H, J)
+		return
+	end
+
 	-- BAT BUOC nhan quest dung truoc khi farm level
 	if not hasQuest and typeof(f) == "string" then
 		TakeQuestLevel()
 		return
 	end
 	do
-		if
-			Settings["Auto Quest [Katakuri/Bone/Tyrant]"]
-			and t.Data.Level.Value >= C
-			and not CheckQuest()
-		then
-			QuestBoneAndkatakuri(H, J)
-			return
-		end
 		if not Settings["Farm Material"] and Settings["Select Method Farm"] == "Farm Tyrant of the Skies" then
 			if CheckNameBoss("Tyrant of the Skies") then
 				V = CheckNameBoss("Tyrant of the Skies")
@@ -6124,6 +6236,17 @@ function FarmMethod()
 						or not Settings["Start Farm"]
 						or not StackFarm
 					wait(1)
+				else
+					-- Mark an unavailable spawn as tried.  Without this, one typo or
+					-- renamed NPC (notably Possessed/Posessed Mummy) made the loop
+					-- select the same missing spawn forever and never try the others.
+					if Y and not table.find(N, Y) then
+						table.insert(N, Y)
+					end
+					if #N >= #f then
+						N = {}
+						DeleteIgnoredMobSpawn()
+					end
 				end
 			else
 				local Y = DetectPartSpawnMob(f, true)
@@ -16063,7 +16186,7 @@ function DetectRequestSoulGuitar()
 	elseif not CheckCountItem("Bones", 500) then
 		m, g, R =
 			"TravelZou",
-			{ "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy" },
+			{ "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy", "Possessed Mummy" },
 			getgenv().CheckPlaceId
 	end
 	return g, R, m
