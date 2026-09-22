@@ -3118,202 +3118,9 @@ CelestialDomainController =
 LocalPlayer = t
 L = game:GetService("ReplicatedStorage")
 WorldOrigin = workspace:WaitForChild("_WorldOrigin", 10)
-travelFunctions = {}
-PlayerSpawnsLot = {}
-BypassTpLocation = {}
-PlrData = game:GetService("Players").LocalPlayer.Data
-localPlayerFunctions = {}
-function localPlayerFunctions.IsAlive()
-	local y = LocalPlayer.Character
-	if not y then
-		return false
-	end
-	local x = y:FindFirstChildOfClass("Humanoid")
-	if not x then
-		return false
-	end
-	return x.Health > 0
-end
-function getHRP()
-	local y = LocalPlayer.Character
-	if not y then
-		return nil
-	end
-	return y:FindFirstChild("HumanoidRootPart") or (y:FindFirstChild("UpperTorso")) or (y:FindFirstChild("Torso"))
-end
-function travelFunctions.GetDistance(y, x)
-	if not localPlayerFunctions.IsAlive() then
-		return 1 / 0
-	end
-	if not x then
-		local k = getHRP()
-		if not k then
-			return 1 / 0
-		end
-		x = k.Position
-	end
-	return (y - x).Magnitude
-end
-function travelFunctions.LoadBypassTPLocation()
-	table.clear(PlayerSpawnsLot)
-	table.clear(BypassTpLocation)
-	local y, x = WorldOrigin:FindFirstChild("PlayerSpawns"), WorldOrigin:FindFirstChild("Locations")
-	if not y or not x then
-		return
-	end
-	for k, k in ipairs(y:GetChildren()) do
-		for y, y in ipairs(k:GetChildren()) do
-			if y:IsA("Model") then
-				table.insert(PlayerSpawnsLot, { y.Name, y:GetModelCFrame() })
-			end
-		end
-		k.ChildAdded:Connect(function(y)
-			task.wait()
-			if y:IsA("Model") then
-				table.insert(PlayerSpawnsLot, { y.Name, y:GetModelCFrame() })
-			end
-		end)
-	end
-	local function y(k)
-		if not k:IsA("BasePart") then
-			return
-		end
-		BypassTpLocation[k.Name] = {}
-		local P = k:FindFirstChildWhichIsA("SpecialMesh")
-		local e = P and P.Scale.X or 1
-		P = k.Size.X * e / 2
-		for e, e in ipairs(PlayerSpawnsLot) do
-			if (e[2].Position - k.Position).Magnitude <= P then
-				table.insert(BypassTpLocation[k.Name], e)
-			end
-		end
-	end
-	for k, k in ipairs(x:GetChildren()) do
-		y(k)
-	end
-	x.ChildAdded:Connect(function(x)
-		task.wait(3)
-		y(x)
-	end)
-end
-function travelFunctions.GetTPLocation(y)
-	local x = WorldOrigin:FindFirstChild("Locations")
-	if not x then
-		return nil
-	end
-	local k, P = 1 / 0
-	for e, Y in ipairs(x:GetChildren()) do
-		e = BypassTpLocation[Y.Name]
-		if e then
-			local x = Y:FindFirstChildWhichIsA("SpecialMesh")
-			local H = x and x.Scale.X or 1
-			if Y.Size.X * H / 2 >= travelFunctions.GetDistance(y, Y.Position) then
-				for x, Y in ipairs(e) do
-					x = travelFunctions.GetDistance(y, Y[2].Position)
-					if x < k then
-						k, P = x, Y[1]
-					end
-				end
-			end
-		end
-	end
-	return P
-end
-function travelFunctions.TweenBypass(y, x)
-	x = x or 0
-	if x >= 5 then
-		return
-	end
-	local k, P = pcall(function()
-		if not y then
-			return
-		end
-		if not next(BypassTpLocation) then
-			travelFunctions.LoadBypassTPLocation()
-		end
-		local e = LocalPlayer.Character
-		if not e then
-			return
-		end
-		if not getHRP() then
-			return
-		end
-		local Y = {}
-		for H, H in pairs(BypassTpLocation) do
-			for B, B in ipairs(H) do
-				if not table.find(Y, B[2]) then
-					table.insert(Y, B[2])
-				end
-			end
-		end
-		if #Y == 0 then
-			return
-		end
-		table.sort(Y, function(H, B)
-			return travelFunctions.GetDistance(H.Position, y.Position)
-				< travelFunctions.GetDistance(B.Position, y.Position)
-		end)
-		local H = e:FindFirstChild("LastSpawnPoint")
-		if H then
-			H.Disabled = true
-		end
-		task.wait()
-		for B, Z in ipairs(Y) do
-			B = travelFunctions.GetTPLocation(Z.Position)
-			if B then
-				local Y = travelFunctions.GetDistance(Z.Position, y.Position)
-				if
-					travelFunctions.GetDistance(y.Position) > Y + 500
-					and travelFunctions.GetDistance(Z.Position) >= 1000
-				then
-					CommF:InvokeServer("SetLastSpawnPoint", B)
-					if PlrData.LastSpawnPoint.Value == B then
-						e.Humanoid.Health = 0
-						repeat
-							task.wait()
-						until localPlayerFunctions.IsAlive()
-						if H then
-							H.Disabled = false
-						end
-						travelFunctions.TweenBypass(y, x + 1)
-						return true
-					end
-				end
-			end
-		end
-		if H then
-			H.Disabled = false
-		end
-	end)
-	if not k then
-		warn("[TweenBypass ERROR]:", P)
-	end
-	return false
-end
-function ShouldResetTeleportSmart(y)
-	if not Settings["Reset Teleport"] then
-		return false
-	end
-	if G or ReadyToDodge then
-		return false
-	end
-	local x = getHRP()
-	if not x then
-		return false
-	end
-	local k, P = N(y.Position), N(x.Position)
-	if not k then
-		return true
-	end
-	if P and k and P.Name == k.Name then
-		return false
-	end
-	return true
-end
-task.spawn(function()
-	travelFunctions.LoadBypassTPLocation()
-end)
-BypassTp = travelFunctions
+-- [TWEEN-ONLY] Da go bo toan bo he thong Bypass TP (TweenBypass, LoadBypassTPLocation,
+-- GetTPLocation, ShouldResetTeleportSmart, BypassTp, PlayerSpawnsLot, BypassTpLocation, PlrData,
+-- getHRP/localPlayerFunctions phuc vu bypass). Di chuyen gio PHU THUOC HOAN TOAN vao tween (ham B/toTarget).
 local function y(x)
 	if x:FindFirstChild("FloatForce") then
 		return
@@ -3457,13 +3264,8 @@ function toTarget(P, e)
 	end
 	-- [FIX Lv90] Luon bat noclip khi teleport de khong bi kẹt tường/Wall check.
 	pcall(function() getgenv().noclip = true end)
-	-- [FIX Lv90] Biến triggerDist lưu khoảng cách để dịch chuyển tức thời,
-	-- KHONG dùng lại biến e (bị overwrite thành CFrame trong phần Sea3
-	-- special-handling bên dưới). Trước đây, khi gọi toTarget(pos, true)
-	-- (đúng vị trí NPC), e = true bị đổi thành CFrame rác sau đoạn xử lý
-	-- special Sea3 → B(H, e, Y) di chuyển đến sai toạ độ → nhân vật đứng yên.
-	local precise = (e == true)
-	local triggerDist = precise and 8 or 150
+	-- [TWEEN-ONLY] Da bo moi che do teleport tuc thoi, toTarget chi di chuyen bang tween.
+	-- Tham so thu 2 (precise) giu lai de tuong thich voi cac loi goi cu, khong con tac dung.
 	k.LastCall = tick()
 	if Z and Z.Sit then
 		TweenManager.CancelCurrent()
@@ -3497,25 +3299,8 @@ function toTarget(P, e)
 			end
 		end
 	end
-	-- [FIX Lv90] Với precise mode (đi đến NPC nhận quest), teleport thẳng
-	-- luôn nếu trong bán kính triggerDist thay vì dựa vào tween. Tránh bị
-	-- kẹt khi Y lớn hơn 8 một chút do nhân vật chưa đứng hoàn toàn trên cao.
-	if Y < triggerDist and not G and not ReadyToDodge then
-		TweenManager.CancelTweenOnly()
-		I()
-		H.CFrame = P
-		return
-	end
-	-- [FIX Lv90] Khi precise=true và khoảng cách > triggerDist nhưng < 150
-	-- (cùng đảo, không qua special sea-handling), teleport ngay đến NPC
-	-- để không bị phụ thuộc tween bị block. Đảm bảo TakeQuest LUÔN di
-	-- chuyển nhân vật khi đã có toạ độ NPC.
-	if precise and Y < 250 then
-		TweenManager.CancelTweenOnly()
-		pcall(I)
-		H.CFrame = CFrame.new(P.Position + Vector3.new(0, 4, 0))
-		return
-	end
+	-- [TWEEN-ONLY] Bo hoan toan teleport tuc thoi (H.CFrame = P) ke ca o cu ly gan:
+	-- du muc tieu cach bao nhieu studs cung bay bang tween (ham B) cho toi noi.
 	if game.PlaceId ~= 122478697296975 then
 		local seaE = CFrame.new(28609.392578125, 14896.533203125, 106.4216537475586)
 		if
@@ -3599,24 +3384,7 @@ function toTarget(P, e)
 			end
 			return
 		end
-		if Settings["Use Portal Teleport"] then
-			local d = t.Character:FindFirstChild("Portal-Portal") or (t.Backpack:FindFirstChild("Portal-Portal"))
-			if d and d.Level.Value > 200 and (_()) then
-				for d, _ in pairs(l[game.Workspace:GetAttribute("MAP")] or {}) do
-					if (P.Position - _).Magnitude <= 3000 and Y >= 3000 then
-						getgenv().noclip = true
-						if o(d) then
-							local l = tick() + 5
-							repeat
-								task.wait(0.2)
-							until t.Character and (t.Character.HumanoidRootPart.Position - _).Magnitude < 500
-								or tick() > l
-							return
-						end
-					end
-				end
-			end
-		end
+		-- [TWEEN-ONLY] Da bo "Use Portal Teleport" (dung trai Portal de teleport nhanh): moi di chuyen deu qua tween.
 		local l, d, _
 		if Y >= 3000 then
 			for o, y in pairs(Q) do
@@ -3716,11 +3484,7 @@ function toTarget(P, e)
 			return
 		end
 	end
-	if ShouldResetTeleportSmart(P) then
-		if BypassTp.TweenBypass(P) then
-			return
-		end
-	end
+	-- [TWEEN-ONLY] Da bo Bypass TP ("Reset Teleport": set spawn point roi chet de respawn o cho khac).
 	if H.Position.Y < -60 and H.Position.Y > -100 then
 		H.CFrame = H.CFrame * CFrame.new(0, 20, 0)
 	end
@@ -4746,12 +4510,6 @@ SettingFarmMainSection.CreateSlider(
 		SaveSettings("Time Hop Server", I)
 	end
 )
-SettingFarmMainSection.CreateToggle(
-	{ Title = "Use Portal Teleport", Desc = nil, Default = Settings["Use Portal Teleport"] or false },
-	function(I)
-		SaveSettings("Use Portal Teleport", I)
-	end
-)
 SettingFarmMainSection.CreateSlider(
 	{ Title = "Bring Mob Count", Min = 2, Max = 6, Default = Settings["Bring Mob Count"] or 2, Precise = true },
 	function(I)
@@ -4762,12 +4520,6 @@ SettingFarmMainSection.CreateToggle(
 	{ Title = "Bring Mob", Desc = nil, Default = Settings["Bring Mob"] or true },
 	function(I)
 		SaveSettings("Bring Mob", I)
-	end
-)
-SettingFarmMainSection.CreateToggle(
-	{ Title = "Reset Teleport [ Beta ]", Desc = nil, Default = Settings["Reset Teleport"] or false },
-	function(I)
-		SaveSettings("Reset Teleport", I)
 	end
 )
 SettingFarmMainSection.CreateSlider(
@@ -5730,25 +5482,10 @@ function takeQuest()
 	end
 
 	local distToNpc = (questPos - HRP.Position).Magnitude
-	-- [FIX Lv90] First/Second Sea cac dao cach nhau < 10000 studs. De tranh tinh
-	-- trang toTarget/tween bi block boi setting nao do (Use Portal, Teleport Y,
-	-- Reset Teleport...), TELEPORT THANG TRUC TIEP bang H.CFrame luon luon khi
-	-- khoang cach < 10000 (khong phai Third Sea special travel).
-	-- Chi khi > 10000 (vd di chuyen giua cac Sea) moi dung toTarget co special handling.
+	-- [TWEEN-ONLY] Da bo teleport tuc thoi (HRP.CFrame = destCF): moi cu ly deu bay
+	-- bang tween qua toTarget (toTarget tu xu ly di chuyen giua cac Sea/dao can thiet).
 	local destCF = CFrame.new(questPos) * CFrame.new(0, 4, 0)
 	if distToNpc > 12 then
-		if distToNpc <= 10000 then
-			pcall(TweenManager and TweenManager.CancelCurrent)
-			pcall(I)
-			-- Bat noclip + fly force truoc khi teleport
-			pcall(function() getgenv().noclip = true end)
-			if not HRP:FindFirstChild("FloatForce") then
-				pcall(y, HRP)
-			end
-			HRP.CFrame = destCF
-			return
-		end
-		-- Cach rat xa (cross-sea): dung toTarget co sea-handling
 		toTarget(destCF, true)
 		return
 	end
@@ -7172,8 +6909,8 @@ function AutoQuestBarito()
 			if (t.Character.HumanoidRootPart.Position - Vector3.new(-1835.65, 10.4325, 1679.75)).Magnitude > 100 then
 				toTarget(CFrame.new(-1835.65, 10.4325, 1679.75))
 			else
-				t.Character.HumanoidRootPart.CFrame =
-					game:GetService("Workspace").Map.Dressrosa.BartiloPlates[checkplatebarito()].CFrame
+				-- [TWEEN-ONLY] Bay tween toi plate thay vi teleport tuc thoi (firetouchinterest van chay o vong lap sau).
+				toTarget(game:GetService("Workspace").Map.Dressrosa.BartiloPlates[checkplatebarito()].CFrame, true)
 				task.wait()
 				firetouchinterest(
 					game:GetService("Workspace").Map.Dressrosa.BartiloPlates[checkplatebarito()],
@@ -7387,19 +7124,13 @@ task.spawn(function()
 								Instance.new("IntValue", Y).Name = "Ignored"
 								wait(0.1)
 							end
-							if not Settings["Use Method Teleport"] then
-								game:GetService("VirtualInputManager"):SendKeyEvent(true, "Space", false, game)
-								wait()
-								game:GetService("VirtualInputManager"):SendKeyEvent(false, "Space", false, game)
-							end
+							game:GetService("VirtualInputManager"):SendKeyEvent(true, "Space", false, game)
+							wait()
+							game:GetService("VirtualInputManager"):SendKeyEvent(false, "Space", false, game)
 							TweenManager.CancelCurrent()
 						end
-						if Settings["Use Method Teleport"] then
-							t.Character.HumanoidRootPart.CFrame = Y.CFrame
-							TweenManager.CancelCurrent()
-						else
-							toTarget(Y.CFrame, true)
-						end
+						-- [TWEEN-ONLY] Luon bay tween toi ruong (da bo setting "Use Method Teleport").
+						toTarget(Y.CFrame, true)
 					until not Y
 						or not Y.Parent
 						or not Settings["Collect Chest When Server Spawn God's Chalice or Fist of Darkness"]
@@ -9181,19 +8912,13 @@ function AutoChest()
 					Instance.new("IntValue", y).Name = "Ignored"
 					wait(0.1)
 				end
-				if not Settings["Use Method Teleport"] then
-					game:GetService("VirtualInputManager"):SendKeyEvent(true, "Space", false, game)
-					wait()
-					game:GetService("VirtualInputManager"):SendKeyEvent(false, "Space", false, game)
-				end
+				game:GetService("VirtualInputManager"):SendKeyEvent(true, "Space", false, game)
+				wait()
+				game:GetService("VirtualInputManager"):SendKeyEvent(false, "Space", false, game)
 				TweenManager.CancelCurrent()
 			end
-			if Settings["Use Method Teleport"] then
-				t.Character.HumanoidRootPart.CFrame = y.CFrame
-				TweenManager.CancelCurrent()
-			else
-				toTarget(y.CFrame, true)
-			end
+			-- [TWEEN-ONLY] Luon bay tween toi ruong (da bo setting "Use Method Teleport").
+			toTarget(y.CFrame, true)
 		until not y
 			or not y.Parent
 			or not Settings["Auto Chest"]
@@ -9221,12 +8946,6 @@ FarmChestSection.CreateToggle(
 	{ Title = "Auto Chest Hop", Desc = nil, Default = Settings["Auto Chest Hop"] or false },
 	function(y)
 		SaveSettings("Auto Chest Hop", y)
-	end
-)
-FarmChestSection.CreateToggle(
-	{ Title = "Use Method Teleport [ Risk ]", Desc = nil, Default = Settings["Use Method Teleport"] or false },
-	function(y)
-		SaveSettings("Use Method Teleport", y)
 	end
 )
 FarmChestSection.CreateToggle(
@@ -11980,11 +11699,8 @@ end
 function CollectSoulEmber()
 	local y = DetectSoulEmber()
 	if y then
-		if t:DistanceFromCharacter(y.Part.Position) > 100 then
-			toTarget(y.Part.CFrame)
-		else
-			t.Character.HumanoidRootPart.CFrame = y.Part.CFrame
-		end
+		-- [TWEEN-ONLY] Bay tween toi Soul Ember (truoc do teleport tuc thoi khi o gan).
+		toTarget(y.Part.CFrame, true)
 	else
 		toTarget(game.workspace._WorldOrigin.Locations["Kitsune Island"].CFrame)
 	end
@@ -14899,12 +14615,8 @@ function UpgradeRaceV2AndV3()
 							m.Character.HumanoidRootPart.CFrame.p,
 							m.Character.HumanoidRootPart.Position + m.Character.HumanoidRootPart.Velocity / 1.2
 						)
-						if t:DistanceFromCharacter(m.Character.HumanoidRootPart.Position) < 50 then
-							t.Character.HumanoidRootPart.CFrame = m.Character.HumanoidRootPart.CFrame
-								* CFrame.new(0, 0, 3)
-						else
-							toTarget(m.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3))
-						end
+						-- [TWEEN-ONLY] Bam theo muc tieu bang tween thay vi teleport tuc thoi.
+						toTarget(m.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3))
 					end)
 					spawn(function()
 						if t:DistanceFromCharacter(m.Character.HumanoidRootPart.Position) < 50 then
@@ -14939,12 +14651,8 @@ function UpgradeRaceV2AndV3()
 							g.Character.HumanoidRootPart.CFrame.p,
 							g.Character.HumanoidRootPart.Position + g.Character.HumanoidRootPart.Velocity / 1.2
 						)
-						if t:DistanceFromCharacter(g.Character.HumanoidRootPart.Position) < 50 then
-							t.Character.HumanoidRootPart.CFrame = g.Character.HumanoidRootPart.CFrame
-								* CFrame.new(0, 0, 3)
-						else
-							toTarget(g.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3))
-						end
+						-- [TWEEN-ONLY] Bam theo muc tieu bang tween thay vi teleport tuc thoi.
+						toTarget(g.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3))
 					end)
 					spawn(function()
 						if t:DistanceFromCharacter(g.Character.HumanoidRootPart.Position) < 50 then
@@ -16219,16 +15927,16 @@ spawn(function()
 									repeat
 										task.wait()
 										task.spawn(getgenv().AttackFunctionnhungSuperTrial)
-										t.Character.HumanoidRootPart.CFrame = g.HumanoidRootPart.CFrame
-											* CFrame.new(0, 50, 0)
+										-- [TWEEN-ONLY] Bam theo muc tieu Trial bang tween (truoc do teleport HRP.CFrame).
+										toTarget(g.HumanoidRootPart.CFrame * CFrame.new(0, 50, 0), true)
 									until tick() - m >= 0.75
 									R = false
 								else
 									if R then
 										return
 									end
-									t.Character.HumanoidRootPart.CFrame = g.HumanoidRootPart.CFrame
-										* CFrame.new(0, 0, 4)
+									-- [TWEEN-ONLY] Bam theo muc tieu Trial bang tween.
+									toTarget(g.HumanoidRootPart.CFrame * CFrame.new(0, 0, 4), true)
 								end
 								task.spawn(getgenv().AttackFunctionnhungSuperTrial)
 								equiptool(NameWeapon(Settings["Select Weapon Attack Trial"]))
@@ -16765,7 +16473,16 @@ function QuestGood3()
 	end
 	for g, g in pairs(AllNPCS) do
 		if g.Name:match("Luxury Boat Dealer") then
-			t.Character.HumanoidRootPart.CFrame = g.HumanoidRootPart.CFrame
+			-- [TWEEN-ONLY] Bay tween toi Boat Dealer, cho den khi toi gan roi moi invoke quest (truoc do teleport tuc thoi HRP.CFrame).
+			local boatCF = g.HumanoidRootPart.CFrame * CFrame.new(0, 4, 0)
+			toTarget(boatCF, true)
+			local boatWait = tick() + 10
+			repeat
+				task.wait()
+			until not t.Character
+				or not t.Character:FindFirstChild("HumanoidRootPart")
+				or (t.Character.HumanoidRootPart.Position - boatCF.Position).Magnitude <= 10
+				or tick() > boatWait
 			game:GetService("ReplicatedStorage").Remotes.CommF_
 				:InvokeServer(unpack({ [1] = "CDKQuest", [2] = "BoatQuest", [3] = g }))
 		end
@@ -16859,8 +16576,6 @@ function Questgood5()
 		).Magnitude < 1000
 	then
 		if game:GetService("Workspace").Map.HeavenlyDimension.Exit.BrickColor == BrickColor.new("Cloudy grey") then
-			game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame =
-				game:GetService("Workspace").Map.HeavenlyDimension.Exit.CFrame
 			toTarget(game:GetService("Workspace").Map.HeavenlyDimension.Exit.CFrame)
 			return
 		end
@@ -16896,7 +16611,8 @@ function Questgood5()
 						)
 					end
 				until DetectMobCDK()
-				t.Character.HumanoidRootPart.CFrame = t.Character.HumanoidRootPart.CFrame * CFrame.new(0, 50, 0)
+			-- [TWEEN-ONLY] Bay tween len cao 50 studs thay vi teleport tuc thoi.
+			toTarget(t.Character.HumanoidRootPart.CFrame * CFrame.new(0, 50, 0), true)
 			end
 		end
 	elseif CheckNameBoss("Cake Queen") then
@@ -17081,8 +16797,6 @@ function QuestEvil5()
 		end
 	else
 		if game:GetService("Workspace").Map.HellDimension.Exit.BrickColor == BrickColor.new("Olivine") then
-			game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame =
-				game:GetService("Workspace").Map.HellDimension.Exit.CFrame
 			toTarget(game:GetService("Workspace").Map.HellDimension.Exit.CFrame)
 			return
 		end
@@ -17118,7 +16832,8 @@ function QuestEvil5()
 						)
 					end
 				until DetectMobCDK()
-				t.Character.HumanoidRootPart.CFrame = t.Character.HumanoidRootPart.CFrame * CFrame.new(0, 50, 0)
+			-- [TWEEN-ONLY] Bay tween len cao 50 studs thay vi teleport tuc thoi.
+			toTarget(t.Character.HumanoidRootPart.CFrame * CFrame.new(0, 50, 0), true)
 			end
 		end
 	end
