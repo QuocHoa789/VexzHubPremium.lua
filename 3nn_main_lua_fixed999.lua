@@ -9777,22 +9777,21 @@ local function E()
 	if l and l.BoxName then
 		return l.BoxName, l
 	end
-	return "DLCBoxData", nil
+	return "ZiolesGacha", nil
 end
 local function b()
-	local l, y = game:GetService("ReplicatedStorage").Remotes.CommF_, E()
-	local E, P, Y = l:InvokeServer("Cousin", "Check", y)
-	if (P or 0) < 50 then
+	local l = game:GetService("ReplicatedStorage").Modules.Net:FindFirstChild("RF/GachaNetworkRF")
+	if not l then
+		warn("Kh\195\180ng t\195\172m th\194\165y remote RF/GachaNetworkRF")
+		return false
+	end
+	local y = E()
+	if (t.Data.Level.Value or 0) < 50 then
 		warn("Ch\198\176a Lv50")
 		return false
 	end
-	if (E or 0) < (Y or 1 / 0) then
-		return false
-	end
-	if l:InvokeServer("Cousin", "CheckTime", y) ~= true then
-		return false
-	end
-	if l:InvokeServer("Cousin", y) == 1 then
+	local E = l:InvokeServer({ Context = "Purchase", BoxName = y })
+	if E == 1 then
 		return true
 	end
 	return false
