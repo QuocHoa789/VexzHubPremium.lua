@@ -4002,12 +4002,134 @@ end
 local function _stripLvTag(s)
 	return (tostring(s):gsub(" ?%p?Lv%. ?%d+%p?", ""))
 end
+-- [FIX Lv280] Chuan hoa ten mob/quest de so sanh "noi long":
+--   "Toga Warriors" / "toga warrior" / "Toga  Warrior" / "Toga-Warrior" -> "toga warrior"
+-- Nhiu ten trong game co dang so nhieu ("Defeat 8 Gladiators") trong khi ten mob
+-- trong Quests module la so it ("Gladiator"). Khong chuan hoa thi CheckQuest()
+-- tra false -> bot tuong chua co quest -> bay ve NPC goi StartQuest lien tuc
+-- (server tu choi vi DA co quest) -> nhan vat dung im tren dau NPC vinh vien.
+local function _canonMobName(s)
+	local out = string.lower(tostring(s or ""))
+	out = out:gsub("%p", " ") -- bo dau cau: ' . , - ( ) ...
+	out = out:gsub("%s+", " ") -- gop khoang trang thua
+	out = out:gsub("^%s+", ""):gsub("%s+$", "")
+	out = out:gsub("s$", "") -- so it hoa (Gladiators -> Gladiator)
+	return out
+end
+
+-- [FIX Lv280] Kiem tra 2 chuoi co cach nhau <= 1 phep sua (them/xoa/sua 1 ki tu).
+-- Dung de tha lo cho loi chinh ta nho trong ten mob hardcode, vd bug thuc te:
+-- script ghi "Togga Warrior" trong khi game goi la "Toga Warrior" -> DetectMob()
+-- va CheckQuest() khong bao gio khop -> farm level 275-300 dung im.
+local function _oneEditAway(a, b)
+	if a == b then
+		return true
+	end
+	local la, lb = #a, #b
+	if math.abs(la - lb) > 1 then
+		return false
+	end
+	local i = 1
+	while i <= la and i <= lb and a:sub(i, i) == b:sub(i, i) do
+		i = i + 1
+	end
+	local ei, ej = la, lb
+	while ei >= i and ej >= i and a:sub(ei, ei) == b:sub(ej, ej) do
+		ei, ej = ei - 1, ej - 1
+	end
+	return (ei - i + 1) <= 1 and (ej - i + 1) <= 1
+end
+
+-- So sanh 1 tu: khop chinh xac, lech 1 ki tu, hoac dang rut gon
+-- ("danger" == "dangerous", "royal" == "royalist"). Day la nguyen nhan that su
+-- khien nhieu muc level bi dung: script hardcode "Danger Prisoner" trong khi
+-- game goi "Dangerous Prisoner" (va nguoc lai tuy ban cap nhat).
+local function _wordLooseMatch(a, b)
+	if a == b then
+		return true
+	end
+	-- Tu qua ngan (< 4 ki tu, vd "Imp") chi khop chinh xac -> tranh khop nham
+	if #a >= 4 and #b >= 4 and _oneEditAway(a, b) then
+		return true
+	end
+	local short, long = a, b
+	if #b < #a then
+		short, long = b, a
+	end
+	-- Chi tha lo khi tu ngan >= 5 ki tu (tranh khop nham "spy"/"soldier", "imp"/"idol")
+	if #short >= 5 and (#long - #short) <= 4 and long:sub(1, #short) == short then
+		return true
+	end
+	return false
+end
+
+-- So sanh tung tu: cung so tu va moi tu khop "noi long" (xem _wordLooseMatch).
+local function _wordsFuzzyMatch(a, b)
+	local aw, bw = {}, {}
+	for w in string.gmatch(a, "%S+") do
+		aw[#aw + 1] = w
+	end
+	for w in string.gmatch(b, "%S+") do
+		bw[#bw + 1] = w
+	end
+	if #aw == 0 or #aw ~= #bw then
+		return false
+	end
+	for i = 1, #aw do
+		if not _wordLooseMatch(aw[i], bw[i]) then
+			return false
+		end
+	end
+	return true
+end
+
+-- Tim ten mob ( dang canonical ) ben trong 1 doan text (vd text quest UI
+-- "Defeat 7 Toga Warriors"), chap nhan lech 1 ki tu moi tu.
+local function _textHasMob(text, mob)
+	if text == nil or mob == nil then
+		return false
+	end
+	local rawText, rawMob = tostring(text), tostring(mob)
+	if string.find(rawText, rawMob, 1, true) then
+		return true
+	end
+	local cm = _canonMobName(_stripLvTag(rawMob))
+	local ct = _canonMobName(_stripLvTag(rawText))
+	if cm == "" or ct == "" then
+		return false
+	end
+	if string.find(ct, cm, 1, true) then
+		return true
+	end
+	local function split(s)
+		local out = {}
+		for w in string.gmatch(s, "%S+") do
+			out[#out + 1] = w
+		end
+		return out
+	end
+	local mobWords, textWords = split(cm), split(ct)
+	local mw = #mobWords
+	if mw == 0 then
+		return false
+	end
+	-- Quet moi cua so `mw` tu cua text, so sanh fuzzy theo tung tu
+	for i = 1, #textWords - mw + 1 do
+		local slice = table.concat(textWords, " ", i, i + mw - 1)
+		if _wordsFuzzyMatch(slice, cm) then
+			return true
+		end
+	end
+	return false
+end
+
 -- [FIX Lv90] Helper so sanh ten mob: strip Lv tag (<Lv.X>, [Lv.X]...) ra KHOI
 -- CA HAI VE (ten enemy trong workspace.Enemies va ten truyen vao), sau do so
 -- sanh khop chinh xac hoac containment fuzzy. Cach cu o.Name == Q khong bao
 -- gio match vi enemy that thuong co dang "Snow Bandit <Lv.90>". Khi khong tim
 -- duoc mob, FarmMethod di theo nhanh DetectPartSpawnMob -> neu spawnpoint
 -- regex cung sai -> vong lap teleport vo tan -> "full" man hinh.
+-- [FIX Lv280] Bo sung chuan hoa (so it/so nhieu, dau cau) + fuzzy 1 ki tu.
 local function _nameMatches(actual, target)
 	if actual == target then
 		return true
@@ -4016,10 +4138,35 @@ local function _nameMatches(actual, target)
 		return false
 	end
 	local a = _stripLvTag(actual)
-	local t = _stripLvTag(target)
-	return a == t
-		or string.find(a, t, 1, true)
-		or string.find(t, a, 1, true)
+	local b = _stripLvTag(target)
+	if a == b then
+		return true
+	end
+	if string.find(a, b, 1, true) or string.find(b, a, 1, true) then
+		return true
+	end
+	local ca, cb = _canonMobName(a), _canonMobName(b)
+	if ca == "" or cb == "" then
+		return false
+	end
+	if ca == cb then
+		return true
+	end
+	if string.find(ca, cb, 1, true) or string.find(cb, ca, 1, true) then
+		return true
+	end
+	-- [FIX Lv280] Fuzzy theo tung tu khi cung so tu: xu ly loi chinh ta nho
+	-- ("Togga Warrior" vs "Toga Warrior") va dang rut gon ("Danger Prisoner" vs
+	-- "Dangerous Prisoner"). Khong gate theo tong do dai vi 2 truong hop tren
+	-- lech nhau 1-3 ki tu.
+	if _wordsFuzzyMatch(ca, cb) then
+		return true
+	end
+	-- Ten 1 tu: chi fuzzy khi du dai de tranh khop nham (Imp/Idol, Saw/Swan)
+	if #ca >= 5 and #cb >= 5 and _oneEditAway(ca, cb) then
+		return true
+	end
+	return false
 end
 local function _mobInList(name, list)
 	if typeof(list) == "table" then
@@ -4837,7 +4984,11 @@ function CheckQuest(X)
 			if not X or X == "" then
 				return true
 			end
-			if string.find(tracked, tostring(X), 1, true) then
+			-- [FIX Lv280] Dung _textHasMob (chuan hoa so nhieu/so it + fuzzy 1 ki tu)
+			-- thay vi string.find thuan. Text that cua game la "Defeat 7 Toga Warriors"
+			-- (so nhieu) nen so sanh thuong truot -> CheckQuest false -> bot nghi chua
+			-- co quest -> bay ve NPC spam StartQuest -> dung im tren dau NPC.
+			if _textHasMob(tracked, X) then
 				return true
 			end
 			-- Khong return false o day de cho phep fall-through neu khong match
@@ -4849,7 +5000,7 @@ function CheckQuest(X)
 			if not X or X == "" then
 				return true
 			end
-			if string.find(tostring(aq.mob), tostring(X), 1, true) then
+			if _nameMatches(tostring(aq.mob), tostring(X)) then
 				return true
 			end
 		end
@@ -4859,7 +5010,7 @@ function CheckQuest(X)
 			if not X or X == "" then
 				return true
 			end
-			if string.find(tostring(QuestController.CurrentQuest), tostring(X), 1, true) then
+			if _nameMatches(tostring(QuestController.CurrentQuest), tostring(X)) then
 				return true
 			end
 		end
@@ -4875,7 +5026,7 @@ function CheckQuest(X)
 			if not X or X == "" then
 				return true
 			end
-			if title and string.find(title, tostring(X), 1, true) then
+			if title and _textHasMob(title, X) then
 				return true
 			end
 			return false
@@ -4887,7 +5038,7 @@ function CheckQuest(X)
 				return true
 			end
 			for name in next, GuideModule.Data.QuestData.Task do
-				if string.find(tostring(name), tostring(X), 1, true) then
+				if _nameMatches(tostring(name), tostring(X)) then
 					return true
 				end
 			end
@@ -4979,6 +5130,72 @@ function GetBestQuest()
 	return bestLevelReq, bestRnq, bestTaskName, bestRidq
 end
 
+-- [FIX Lv280] Tim quest trong QuestsModule theo "manh" ten mob.
+-- Tra ve: LevelReq, InternalQuestName, TenMobChinhXacCuaGame, IDQuest.
+-- Ly do: bang hardcoded de sai chinh ta ten mob (bug thuc te o Lv280:
+-- "Togga Warrior" trong khi game goi "Toga Warrior", va quest dung cho
+-- 275-299 la "Gladiator" id 2 chu khong phai id 1). Ten sai => CheckQuest()
+-- va DetectMob() khong bao gio khop => bot bay ve NPC roi dung im mai tren
+-- dau NPC (StartQuest bi server tu choi vi da co quest).
+-- Ham nay doc ten/ID that tu module cua game nen khong con phu thuoc chinh ta.
+local function _freshQuestCache()
+	local cache = QuestController.CachedQuestData
+	if not cache or next(cache) == nil then
+		local fresh = safeRequire("Quests", { "Quests" }, "QuestData", { "QuestData" })
+		if fresh and next(fresh) ~= nil then
+			QuestsModule = fresh
+			H = fresh
+			QuestController.CachedQuestData = fresh
+			cache = fresh
+		elseif QuestsModule and next(QuestsModule) ~= nil then
+			cache = QuestsModule
+		end
+	end
+	return cache
+end
+
+function findQuestByMobFragment(frag, maxLevel, allowExcluded)
+	if not frag or frag == "" then
+		return nil
+	end
+	local cache = _freshQuestCache()
+	local bestLv, bestQn, bestMob, bestId = nil, nil, nil, nil
+	for qn, group in next, (cache or {}) do
+		if (allowExcluded or not table.find(QUEST_EXCLUDE, tostring(qn))) and typeof(group) == "table" then
+			for id, ct in next, group do
+				if
+					typeof(ct) == "table"
+					and ct.Task
+					and type(ct.LevelReq) == "number"
+					and (not maxLevel or ct.LevelReq <= maxLevel)
+				then
+					for mobName, kills in next, ct.Task do
+						if type(kills) == "number" and kills > 1 and _nameMatches(tostring(mobName), tostring(frag)) then
+							if not bestLv or ct.LevelReq > bestLv then
+								bestLv, bestQn, bestMob, bestId = ct.LevelReq, tostring(qn), tostring(mobName), id
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	if not bestQn then
+		return nil
+	end
+	return bestLv, bestQn, bestMob, bestId
+end
+
+-- [FIX Lv280] Lay quest theo moc level, uu tien ten/ID that tu QuestsModule,
+-- chi dung gia tri hardcode lam phuong an cuoi (module chua load kip).
+local function resolveLevelQuest(frag, fbQuest, fbMob, fbId, maxLevel, allowExcluded)
+	local lv, qn, mob, id = findQuestByMobFragment(frag, maxLevel, allowExcluded)
+	if qn and mob and id then
+		return qn, mob, id
+	end
+	return fbQuest, fbMob, fbId
+end
+
 function GetQuest()
 	local Level = t.Data.Level.Value
 	local msn, nq, idq
@@ -4988,16 +5205,25 @@ function GetQuest()
 	-- CheckPlaceId3 = First Sea (Old World): max ~725 (Fountain City)
 	-- CheckPlaceId2 = Second Sea (New World): 700-1500
 	-- CheckPlaceId  = Third Sea: 1500+
-	if Level >= 275 and Level < 300 then
-		-- Colosseum Togga Warrior (First Sea)
-		if game.PlaceId == getgenv().CheckPlaceId3 then
-			nq, msn, idq = "ColosseumQuest", "Togga Warrior", 1
+	-- [FIX Lv280] Colosseum (First Sea): 250-274 = Toga Warrior (id 1),
+	-- 275-299 = Gladiator (id 2). Ban cu chi co nhanh 275-300 va gan
+	-- "Togga Warrior"/id 1 => sai ca ten lan quest => dung im tren dau NPC.
+	if Level >= 250 and Level < 300 and game.PlaceId == getgenv().CheckPlaceId3 then
+		if Level >= 275 then
+			nq, msn, idq = resolveLevelQuest("Gladiator", "ColosseumQuest", "Gladiator", 2, Level)
+		else
+			nq, msn, idq = resolveLevelQuest("Toga Warrior", "ColosseumQuest", "Toga Warrior", 1, Level)
 		end
+	elseif Level >= 120 and Level < 150 and game.PlaceId == getgenv().CheckPlaceId3 then
+		-- [FIX Lv120-149] GetBestQuest() bo qua QUEST_EXCLUDE (co "MarineQuest") nen
+		-- o Marine Fortress bot bi keo lui ve Snowman (Lv100) thay vi Chief Petty
+		-- Officer (Lv120). Tim truc tiep theo ten mob, cho phep ca quest bi exclude.
+		nq, msn, idq = resolveLevelQuest("Chief Petty Officer", "MarineQuest", "Chief Petty Officer", 1, Level, true)
 	elseif Level >= 1450 and game.PlaceId == getgenv().CheckPlaceId2 then
-		nq, msn, idq = "ForgottenQuest", "Water Fighter", 2
+		nq, msn, idq = resolveLevelQuest("Water Fighter", "ForgottenQuest", "Water Fighter", 2, Level)
 	elseif Level >= 700 and Level < 750 and game.PlaceId == getgenv().CheckPlaceId3 then
 		-- Fountain City Galley Captain (First Sea, mob 725 - mob cuoi First Sea)
-		nq, msn, idq = "FountainQuest", "Galley Captain", 2
+		nq, msn, idq = resolveLevelQuest("Galley Captain", "FountainQuest", "Galley Captain", 2, Level)
 	end
 	-- Neu chua co (cac level con lai, hoac da doi sea thanh cong),
 	-- dung GetBestQuest tu QuestsModule dong.
@@ -5028,8 +5254,45 @@ function GetQuest()
 				nq, msn, idq = "SnowQuest", "Snow Bandit", 1
 			elseif Level >= 100 and Level < 120 then
 				nq, msn, idq = "SnowQuest", "Snowman", 2
-			elseif Level >= 120 and Level < 135 then
-				nq, msn, idq = "FrozenQuest", "Yeti", 1
+			elseif Level >= 120 and Level < 150 then
+				nq, msn, idq = resolveLevelQuest("Chief Petty Officer", "MarineQuest", "Chief Petty Officer", 1, Level)
+			elseif Level >= 150 and Level < 175 then
+				nq, msn, idq = resolveLevelQuest("Sky Bandit", "SkyQuest", "Sky Bandit", 1, Level)
+			elseif Level >= 175 and Level < 190 then
+				nq, msn, idq = resolveLevelQuest("Dark Master", "SkyExploitQuest", "Dark Master", 2, Level)
+			elseif Level >= 190 and Level < 210 then
+				nq, msn, idq = resolveLevelQuest("Prisoner", "PrisonerQuest", "Prisoner", 1, Level)
+			elseif Level >= 210 and Level < 250 then
+				-- [FIX Lv280] "Dangerous Prisoner" (game) / "Danger Prisoner" (script cu):
+				-- _nameMatches() da tha lo ca 2 cach viet nen khong con ket o moc nay.
+				nq, msn, idq = resolveLevelQuest("Dangerous Prisoner", "PrisonerQuest", "Dangerous Prisoner", 2, Level)
+			elseif Level >= 250 and Level < 275 then
+				nq, msn, idq = resolveLevelQuest("Toga Warrior", "ColosseumQuest", "Toga Warrior", 1, Level)
+			elseif Level >= 275 and Level < 300 then
+				-- [FIX Lv280] MOC LOI CU A NGUOI DUNG: 275-299 phai la Gladiator (id 2).
+				-- Ban cu ghi "Togga Warrior"/id 1 => sai chinh ta + sai quest => bot bay ve
+				-- NPC Colosseum roi dung im tren dau NPC vinh vien (khong farm duoc).
+				nq, msn, idq = resolveLevelQuest("Gladiator", "ColosseumQuest", "Gladiator", 2, Level)
+			elseif Level >= 300 and Level < 325 then
+				nq, msn, idq = resolveLevelQuest("Military Soldier", "MagmaQuest", "Military Soldier", 1, Level)
+			elseif Level >= 325 and Level < 375 then
+				nq, msn, idq = resolveLevelQuest("Military Spy", "MagmaQuest", "Military Spy", 2, Level)
+			elseif Level >= 375 and Level < 400 then
+				nq, msn, idq = resolveLevelQuest("Fishman Warrior", "FishmanQuest", "Fishman Warrior", 1, Level)
+			elseif Level >= 400 and Level < 450 then
+				nq, msn, idq = resolveLevelQuest("Fishman Commando", "FishmanQuest", "Fishman Commando", 2, Level)
+			elseif Level >= 450 and Level < 475 then
+				nq, msn, idq = resolveLevelQuest("God's Guard", "SkyExp1Quest", "God's Guard", 1, Level)
+			elseif Level >= 475 and Level < 525 then
+				nq, msn, idq = resolveLevelQuest("Shanda", "SkyExp1Quest", "Shanda", 2, Level)
+			elseif Level >= 525 and Level < 550 then
+				nq, msn, idq = resolveLevelQuest("Royal Squad", "SkyExp2Quest", "Royal Squad", 1, Level)
+			elseif Level >= 550 and Level < 625 then
+				nq, msn, idq = resolveLevelQuest("Royal Soldier", "SkyExp2Quest", "Royal Soldier", 2, Level)
+			elseif Level >= 625 and Level < 650 then
+				nq, msn, idq = resolveLevelQuest("Galley Pirate", "FountainQuest", "Galley Pirate", 1, Level)
+			elseif Level >= 650 then
+				nq, msn, idq = resolveLevelQuest("Galley Captain", "FountainQuest", "Galley Captain", 2, Level)
 			end
 		end
 	end
@@ -5082,6 +5345,78 @@ end
 
 function GetNameDoubleQuest()
 	return GetLastQuest() or getgenv().NameMobQuest
+end
+
+-- ============================================================
+-- [FIX Lv280] GetActiveQuestMob: ten mob cua quest DANG HOAT DONG
+-- (nguon that tu server/UI), khong phai ten suy ra tu level.
+-- Bug cu a nguoi dung: farm den Lv280 thi nhan vat bay nguoc ve NPC quest
+-- roi dung im tren dau NPC mai mai. Nguyen nhan: GetQuest() tra ve ten mob
+-- hardcode sai ("Togga Warrior" thay vi "Gladiator"/"Toga Warrior") nen
+-- CheckQuest() luon false du nguoi choi DANG co quest -> FarmMethod goi
+-- TakeQuestLevel() lien tuc -> bay ve NPC -> StartQuest bi server tu choi
+-- (vi da co quest) -> lap vo tan, khong bao gio danh mob.
+-- => Luon uu tien quest that dang chay; chi di nhan quest khi thuc su rong.
+-- ============================================================
+function GetActiveQuestMob()
+	-- 1) Remote QuestUpdate (chinh xac nhat: key cua Progress la ten mob)
+	local cq = QuestController.CurrentQuest
+	if cq and cq ~= "" then
+		return tostring(cq)
+	end
+	-- 2) GuideModule.Data.QuestData.Task (key = ten mob)
+	local ok, data = pcall(function()
+		return GuideModule and GuideModule.Data
+	end)
+	if ok and data and data.QuestData and data.QuestData.Task then
+		for name in next, data.QuestData.Task do
+			return tostring(name)
+		end
+	end
+	-- 3) Quest vua accept (cache chong stale khi remote/UI chua kip update)
+	local aq = getgenv().__BFAcceptedQuest
+	if aq and aq.mob and aq.mob ~= "" and (tick() - (aq.time or 0)) < 20 then
+		return tostring(aq.mob)
+	end
+	-- 4) Text UI "Defeat 7 Toga Warriors" -> suy ra ten mob (doi ve dang
+	--    chinh xac trong Quests module neu co, neu khong thi bo "s" so nhieu)
+	local txt = _readTrackedQuest()
+	if txt and txt ~= "" then
+		local mob = txt:match("[Dd]efeat%s+%d+%s+(.+)$")
+			or txt:match("[Kk]ill%s+%d+%s+(.+)$")
+			or txt:match("[Dd]efeat%s+(.+)$")
+		if mob then
+			mob = _stripLvTag(mob):gsub("%s+$", "")
+			local _, _, exact = findQuestByMobFragment(mob)
+			if exact then
+				return exact
+			end
+			return (mob:gsub("s$", ""))
+		end
+	end
+	return nil
+end
+
+-- Mob nay co that su farm duoc khong? (co enemy hoang hoac co spawn point
+-- hoac co trong du lieu quest). Dung de quyet dinh "giu quest nay de farm"
+-- hay "di nhan quest khac", tranh truong hop bam theo ten mob khong ton tai.
+function IsValidFarmMob(mob)
+	if type(mob) ~= "string" or mob == "" then
+		return false
+	end
+	local ok, res = pcall(function()
+		if DetectMob(mob) then
+			return true
+		end
+		if DetectPartSpawnMob(mob) then
+			return true
+		end
+		if findQuestByMobFragment(mob) then
+			return true
+		end
+		return false
+	end)
+	return ok and res == true
 end
 
 function CountQuest()
@@ -5408,6 +5743,28 @@ function takeQuest()
 	getgenv().NameMobQuest = q.NameMonster
 	getgenv().NameQuest = q.NameQuest
 	getgenv().IDQuest = q.ID
+
+	-- [FIX Lv280] Neu nguoi choi DANG co quest ma mob con farm duoc thi TUYET DOI
+	-- khong bay ve NPC: server tu choi StartQuest khi da co quest -> vong lap vo tan
+	-- "bay ve NPC roi dung im tren dau NPC" (dung nhu loi duoc bao cao o Lv280).
+	-- Dong bo NameMobQuest theo ten mob that de DetectMob()/FarmMethod() danh dung.
+	local liveMob = GetActiveQuestMob()
+	if liveMob and liveMob ~= "" and IsValidFarmMob(liveMob) then
+		if not _nameMatches(tostring(q.NameMonster or ""), liveMob) then
+			if tick() - (getgenv().__LiveQuestLogAt or 0) > 20 then
+				getgenv().__LiveQuestLogAt = tick()
+				print(string.format(
+					"[TakeQuest] Dang co quest '%s' (target theo level la '%s') -> farm theo quest that, khong bay ve NPC",
+					tostring(liveMob), tostring(q.NameMonster)
+				))
+			end
+			getgenv().NameMobQuest = liveMob
+		end
+		local W0 = getgenv().__StuckWatchdog
+		W0.pos, W0.since, W0.forcedAt = nil, tick(), tick()
+		lastTakeQuest = tick()
+		return
+	end
 
 	local W = getgenv().__StuckWatchdog
 	local HRP0 = t.Character and t.Character:FindFirstChild("HumanoidRootPart")
@@ -6195,15 +6552,29 @@ function FarmMethod()
 		end
 	end
 	-- [FIX] special farm list (table) hoac ten mob tu GetQuest() (Kaitun)
+	-- [FIX Lv280] UU TIEN ten mob cua quest DANG CHAY that (server/UI) hon ten suy
+	-- ra tu level. Neu bang quest hardcode sai ten (vd "Togga Warrior" o Lv275-299),
+	-- bot van danh dung mob cua quest dang co thay vi dung im tren dau NPC.
+	local usedLiveQuest = false
 	if not V then
+		local liveMob = GetActiveQuestMob()
+		if liveMob and liveMob ~= "" and IsValidFarmMob(liveMob) then
+			f = liveMob
+			usedLiveQuest = true
+			getgenv().NameMobQuest = liveMob
+		end
 		local gq = GetQuest()
-		local questMob = (gq and gq.NameMonster) or GetNameDoubleQuest() or getgenv().NameMobQuest
+		local questMob = usedLiveQuest
+			and f
+			or ((gq and gq.NameMonster) or GetNameDoubleQuest() or getgenv().NameMobQuest)
 		if not questMob or questMob == "" then
 			UpdateNameMobQuestFromLevel()
 			questMob = getgenv().NameMobQuest
 		end
-		f = questMob or ""
-		if gq and gq.NameMonster then
+		if not usedLiveQuest then
+			f = questMob or ""
+		end
+		if gq and gq.NameMonster and not usedLiveQuest then
 			getgenv().NameMobQuest = gq.NameMonster
 			getgenv().NameQuest = gq.NameQuest
 			getgenv().IDQuest = gq.ID
@@ -6217,6 +6588,11 @@ function FarmMethod()
 		hasQuest = CheckQuest(f) == true
 	else
 		hasQuest = CheckQuest() == true
+	end
+	if usedLiveQuest then
+		-- [FIX Lv280] Quest that dang chay (doc tu server/UI) -> khong goi
+		-- TakeQuestLevel() nua, tranh bay ve NPC roi dung im tren dau NPC.
+		hasQuest = true
 	end
 
 	-- Special farms use a quest name/ID directly instead of GetQuest().  The
