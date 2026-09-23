@@ -10369,33 +10369,156 @@ MultiRaidsSection.CreateToggle(
 		SaveSettings("Auto Multi Raid", b)
 	end
 )
-local b = require(game:GetService("ReplicatedStorage").Controllers.BannerClient)
-local function E()
-	local l = b.TryGetBannerItemIfActiveAsync()
-	if l and l.BoxName then
-		return l.BoxName, l
-	end
-	return "ZiolesGacha", nil
-end
-local function b()
-	local l = game:GetService("ReplicatedStorage").Modules.Net:FindFirstChild("RF/GachaNetworkRF")
+-- ===== [FIX RANDOM DEVIL FRUIT] =====
+-- Remote chuan: game.ReplicatedStorage.Modules.Net["RF/GachaNetworkRF"]:InvokeServer({ Context = "Purchase", BoxName = "ZiolesGacha" })
+-- Thu tu thu: BoxName "ZiolesGacha" TRUOC, chi fallback sang BoxName cua banner event khi box do that bai.
+-- Moi buoc deu boc pcall; that bai => log ly do + backoff tang dan (tranh spam remote tu vong lap chinh 0.5s/lan).
+local RF_GACHA_REMOTE_PATH = "RF/GachaNetworkRF"
+local RF_GACHA_PRIMARY_BOX = "ZiolesGacha"
+local RF_GACHA_MIN_LEVEL = 50
+local RF_GACHA_BACKOFF_MIN = 5 -- cho cho lan that bai dau tien (giay)
+local RF_GACHA_BACKOFF_MAX = 60 -- tran backoff (giay)
+local RF_GACHA_BACKOFF_LEVEL = 15 -- backoff khi chua du level (khong tang dan)
+local RF_GACHA_LOG_PREFIX = "[RandomFruit] "
+local RF_GACHA_STATE = { NextTry = 0, Backoff = 0, Attempts = 0, Success = 0, LastReason = nil }
+
+local function RF_GachaLog(b)
+	local E = RF_GACHA_LOG_PREFIX .. tostring(b)
+	local l, y = pcall(warn, E)
 	if not l then
-		warn("Kh\195\180ng t\195\172m th\194\165y remote RF/GachaNetworkRF")
+		pcall(print, E)
+	end
+end
+
+local function RF_GachaGetRemote()
+	local E, l, y = pcall(function()
+		local b = game:GetService("ReplicatedStorage").Modules.Net
+		if not b then
+			return nil, "Modules.Net khong ton tai"
+		end
+		local P = b[RF_GACHA_REMOTE_PATH] or b:FindFirstChild(RF_GACHA_REMOTE_PATH)
+		if not P then
+			return nil, "khong tim thay remote " .. RF_GACHA_REMOTE_PATH
+		end
+		if type(P.InvokeServer) ~= "function" then
+			return nil, "remote " .. RF_GACHA_REMOTE_PATH .. " khong co InvokeServer (khong phai RemoteFunction)"
+		end
+		return P, nil
+	end)
+	if not E then
+		return nil, "loi khi lay remote: " .. tostring(l)
+	end
+	return l, y
+end
+
+local function RF_GachaGetBannerBox()
+	local E, l, y = pcall(function()
+		local b = game:GetService("ReplicatedStorage").Controllers.BannerClient
+		if not b then
+			return nil, "Controllers.BannerClient khong ton tai"
+		end
+		local P = require(b)
+		if type(P) ~= "table" or type(P.TryGetBannerItemIfActiveAsync) ~= "function" then
+			return nil, "BannerClient khong co TryGetBannerItemIfActiveAsync"
+		end
+		local R = P.TryGetBannerItemIfActiveAsync()
+		if type(R) ~= "table" or not R.BoxName then
+			return nil, "banner event khong active hoac khong tra ve BoxName"
+		end
+		return R.BoxName, nil
+	end)
+	if not E then
+		return nil, "BannerClient loi: " .. tostring(l)
+	end
+	return l, y
+end
+
+local function RF_GachaGetBoxList()
+	local E = {}
+	table.insert(E, { Name = RF_GACHA_PRIMARY_BOX, Source = "mac dinh" })
+	local l, y = RF_GachaGetBannerBox()
+	if l then
+		if l ~= RF_GACHA_PRIMARY_BOX then
+			table.insert(E, { Name = l, Source = "banner event" })
+		end
+	else
+		RF_GachaLog("bo qua box banner: " .. tostring(y))
+	end
+	return E
+end
+
+local function RF_GachaPurchase(E, l)
+	local y, P = pcall(function()
+		return E:InvokeServer({ Context = "Purchase", BoxName = l })
+	end)
+	if not y then
+		return false, "InvokeServer loi (BoxName=" .. tostring(l) .. "): " .. tostring(P)
+	end
+	if P == 1 or P == true or type(P) == "table" then
+		return true, nil
+	end
+	return false, "server tu choi (BoxName=" .. tostring(l) .. "), tra ve: " .. tostring(P)
+end
+
+local function RF_GachaApplyBackoff(b)
+	local E = RF_GACHA_STATE.Backoff
+	if E <= 0 then
+		E = RF_GACHA_BACKOFF_MIN
+	else
+		E = E * 2
+	end
+	if E > RF_GACHA_BACKOFF_MAX then
+		E = RF_GACHA_BACKOFF_MAX
+	end
+	RF_GACHA_STATE.Backoff = E
+	RF_GACHA_STATE.NextTry = tick() + E
+	RF_GachaLog("that bai (" .. tostring(b) .. ") - cho " .. tostring(E) .. "s roi thu lai")
+end
+
+local function RF_GachaTryPurchase()
+	local E = tick()
+	local l, y = pcall(function()
+		return t.Data.Level.Value
+	end)
+	local P = (l and tonumber(y)) or 0
+	if P < RF_GACHA_MIN_LEVEL then
+		RF_GACHA_STATE.NextTry = E + RF_GACHA_BACKOFF_LEVEL
+		RF_GachaLog("chua dat Lv" .. RF_GACHA_MIN_LEVEL .. " (hien tai: " .. tostring(P) .. ") - cho " .. RF_GACHA_BACKOFF_LEVEL .. "s")
 		return false
 	end
-	local y = E()
-	if (t.Data.Level.Value or 0) < 50 then
-		warn("Ch\198\176a Lv50")
+	local R, m = RF_GachaGetRemote()
+	if not R then
+		RF_GachaApplyBackoff(tostring(m))
 		return false
 	end
-	local E = l:InvokeServer({ Context = "Purchase", BoxName = y })
-	if E == 1 then
-		return true
+	for K, x in ipairs(RF_GachaGetBoxList()) do
+		RF_GACHA_STATE.Attempts = RF_GACHA_STATE.Attempts + 1
+		local C, T = RF_GachaPurchase(R, x.Name)
+		if C then
+			RF_GACHA_STATE.Success = RF_GACHA_STATE.Success + 1
+			RF_GACHA_STATE.Backoff = 0
+			RF_GACHA_STATE.NextTry = 0
+			RF_GACHA_STATE.LastReason = nil
+			RF_GachaLog("mua thanh cong box " .. tostring(x.Name) .. " [" .. tostring(x.Source) .. "] - tong " .. RF_GACHA_STATE.Success .. " lan")
+			return true
+		end
+		RF_GACHA_STATE.LastReason = T
+		RF_GachaLog("box " .. tostring(x.Name) .. " [" .. tostring(x.Source) .. "] that bai: " .. tostring(T))
 	end
+	RF_GachaApplyBackoff("khong box nao mua duoc")
 	return false
 end
+
 function RandomFruit()
-	b()
+	if RF_GACHA_STATE.NextTry > tick() then
+		return false -- dang trong thoi gian backoff, bo qua lan nay
+	end
+	local E, l = pcall(RF_GachaTryPurchase)
+	if not E then
+		RF_GachaApplyBackoff("loi khong mong muon: " .. tostring(l))
+		return false
+	end
+	return l
 end
 function DetectCountDF()
 	local b = getbackpack()
