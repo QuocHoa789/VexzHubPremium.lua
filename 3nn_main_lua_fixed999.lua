@@ -1,15 +1,5 @@
--- Neu launcher khong co getgenv() thi bao loi ro rang thay vi crash nil o line 1.
-do
-	if type(getgenv) ~= "function" then
-		error("[Banana Cat Hub] Executor khong ho tro getgenv(); can moi truong Luau tuong thich.", 0)
-	end
-	local ok, env = pcall(getgenv)
-	if not ok or type(env) ~= "table" then
-		error("[Banana Cat Hub] getgenv() khong tra ve bang hop le; kiem tra executor.", 0)
-	end
-	if env.__BF_LOADED then
-		return env.__BF_RESULT
-	end
+if getgenv().__BF_LOADED then
+	return getgenv().__BF_RESULT
 end
 
 -- [FIX] LPH_ATTRIBUTES / VM / NONE la macro Luraph, khong co khi chay script thuong
@@ -153,11 +143,10 @@ repeat
 	wait()
 until game:FindFirstChild("CoreGui")
 getgenv().ExploitReq = syn and syn.request
-	or type(identifyexecutor) == "function" and identifyexecutor() == "Fluxus" and request
+	or identifyexecutor() == "Fluxus" and request
 	or http_request
-	or type(http) == "table" and http.request
+	or http.request
 	or requests
-	or request
 if getgenv().LoadScript then
 	return print("Double UI")
 end
@@ -4094,34 +4083,6 @@ local function _wordsFuzzyMatch(a, b)
 	return true
 end
 
--- [FIX U30] Blox Fruits Update 30 (5/9/2026) doi ten 2 boss Upper Skylands:
---   "Wysper" -> "Sky Warlord" (quest Mole, Lv500, SkyExp1Quest id 3)
---   "Thunder God" -> "Lightning God" (quest Sky Quest Giver 2, Lv575)
--- Cung vi tri, cung LevelReq, cung quest giver - chi khac ten. Mot so
--- message in-game van giu ten cu nen coi 2 ten la MOT khi so sanh, tranh
--- truong hop quest/mob khong bao gio khop -> bot dung im o Lv500.
-local BOSS_ALIAS_GROUPS = {
-	{ "wysper", "sky warlord" },
-	{ "thunder god", "lightning god" },
-}
-local function _bossAliasKey(s)
-	-- Cat cac tag ngoac truoc ([Lv. 500], [Boss], [Magnetized]...) roi moi
-	-- chuan hoa, tranh "boss" bi so-it-hoa thanh "bos" lam lech key.
-	local raw = tostring(s or ""):gsub("%s*%[[^%]]*%]", "")
-	local c = _canonMobName(_stripLvTag(raw))
-	if c == "" then
-		return nil
-	end
-	for _, group in ipairs(BOSS_ALIAS_GROUPS) do
-		for _, alias in ipairs(group) do
-			if c == alias then
-				return group[1]
-			end
-		end
-	end
-	return nil
-end
-
 -- Tim ten mob ( dang canonical ) ben trong 1 doan text (vd text quest UI
 -- "Defeat 7 Toga Warriors"), chap nhan lech 1 ki tu moi tu.
 local function _textHasMob(text, mob)
@@ -4131,22 +4092,6 @@ local function _textHasMob(text, mob)
 	local rawText, rawMob = tostring(text), tostring(mob)
 	if string.find(rawText, rawMob, 1, true) then
 		return true
-	end
-	-- [FIX U30] Thu them ten alias (Wysper <-> Sky Warlord,
-	-- Thunder God <-> Lightning God): UI quest co the dung ten moi trong khi
-	-- quest dang giu ten cu (va nguoc lai).
-	local aliasKey = _bossAliasKey(rawMob)
-	if aliasKey then
-		local lowText = string.lower(rawText)
-		for _, group in ipairs(BOSS_ALIAS_GROUPS) do
-			if group[1] == aliasKey then
-				for _, alias in ipairs(group) do
-					if string.find(lowText, alias, 1, true) then
-						return true
-					end
-				end
-			end
-		end
 	end
 	local cm = _canonMobName(_stripLvTag(rawMob))
 	local ct = _canonMobName(_stripLvTag(rawText))
@@ -4188,14 +4133,6 @@ end
 local function _nameMatches(actual, target)
 	if actual == target then
 		return true
-	end
-	-- [FIX U30] Ten boss cu/moi la mot (Wysper = Sky Warlord,
-	-- Thunder God = Lightning God).
-	if type(actual) == "string" and type(target) == "string" then
-		local ka, kb = _bossAliasKey(actual), _bossAliasKey(target)
-		if ka ~= nil and ka == kb then
-			return true
-		end
 	end
 	if type(actual) ~= "string" or type(target) ~= "string" then
 		return false
@@ -5233,15 +5170,7 @@ function findQuestByMobFragment(frag, maxLevel, allowExcluded)
 					and (not maxLevel or ct.LevelReq <= maxLevel)
 				then
 					for mobName, kills in next, ct.Task do
-						-- [FIX Lv500] Cho phep ca quest boss 1 kill (vd Wysper Lv500):
-						-- truoc day kills > 1 => khong bao gio tim thay quest boss =>
-						-- resolveLevelQuest("Wysper", ...) luon roi ve hardcode va
-						-- IsValidFarmMob("Wysper") tra false.
-						if
-							type(kills) == "number"
-							and kills >= 1
-							and _nameMatches(tostring(mobName), tostring(frag))
-						then
+						if type(kills) == "number" and kills > 1 and _nameMatches(tostring(mobName), tostring(frag)) then
 							if not bestLv or ct.LevelReq > bestLv then
 								bestLv, bestQn, bestMob, bestId = ct.LevelReq, tostring(qn), tostring(mobName), id
 							end
@@ -5257,33 +5186,6 @@ function findQuestByMobFragment(frag, maxLevel, allowExcluded)
 	return bestLv, bestQn, bestMob, bestId
 end
 
--- [FIX Lv500] So mob can giet cua 1 quest (tra ve nil neu khong tim thay).
--- Quest boss (Wysper/Thunder God/Cyborg...) chi yeu cau 1 kill -> dung de
--- phan biet quest boss va quest thuong khi quyet dinh co "doi quest" hay khong.
-local function _questKillCount(mobName)
-	if not mobName or mobName == "" then
-		return nil
-	end
-	local cache = _freshQuestCache()
-	for _, group in next, (cache or {}) do
-		if typeof(group) == "table" then
-			for _, entry in next, group do
-			if typeof(entry) == "table" and entry.Task then
-				for n, ct in next, entry.Task do
-					-- [FIX U30] Dung _nameMatches thay vi == de ten boss cu/moi
-					-- (Wysper/Sky Warlord) van nhan ra quest 1 kill. Neu tra nil
-					-- sai thi logic "double quest" doi nham sang Shanda.
-					if _nameMatches(tostring(n), tostring(mobName)) and type(ct) == "number" then
-						return ct
-					end
-				end
-			end
-			end
-		end
-	end
-	return nil
-end
-
 -- [FIX Lv280] Lay quest theo moc level, uu tien ten/ID that tu QuestsModule,
 -- chi dung gia tri hardcode lam phuong an cuoi (module chua load kip).
 local function resolveLevelQuest(frag, fbQuest, fbMob, fbId, maxLevel, allowExcluded)
@@ -5292,33 +5194,6 @@ local function resolveLevelQuest(frag, fbQuest, fbMob, fbId, maxLevel, allowExcl
 		return qn, mob, id
 	end
 	return fbQuest, fbMob, fbId
-end
-
--- [FIX U30] Lay quest BOSS theo danh sach ten (ten moi -> ten cu), chi dung
--- fallback khi QuestsModule chua load kip. Update 30 doi "Wysper" thanh
--- "Sky Warlord" nen tim ten moi truoc, ten cu sau de tuong thich ca 2.
-local function resolveBossQuest(frags, fbQuest, fbMob, fbId, maxLevel)
-	for _, frag in ipairs(frags) do
-		local lv, qn, mob, id = findQuestByMobFragment(frag, maxLevel)
-		if qn and mob and id then
-			return qn, mob, id
-		end
-	end
-	return fbQuest, fbMob, fbId
-end
-
--- [FIX U30] Mob nay co phai target cua quest BOSS 1 kill khong?
--- (Sky Warlord Lv500, Lightning God Lv575, Cyborg...). Dung de FarmMethod
--- cho boss hoi sinh thay vi hanh xu nhu mob thuong.
-local function _isBossQuestMob(mob)
-	if type(mob) ~= "string" or mob == "" then
-		return false
-	end
-	-- Alias boss U30 luon la quest boss du module chua load kip.
-	if _bossAliasKey(mob) ~= nil then
-		return true
-	end
-	return _questKillCount(mob) == 1
 end
 
 function GetQuest()
@@ -5349,14 +5224,6 @@ function GetQuest()
 	elseif Level >= 700 and Level < 750 and game.PlaceId == getgenv().CheckPlaceId3 then
 		-- Fountain City Galley Captain (First Sea, mob 725 - mob cuoi First Sea)
 		nq, msn, idq = resolveLevelQuest("Galley Captain", "FountainQuest", "Galley Captain", 2, Level)
-	elseif Level >= 500 and Level < 525 and game.PlaceId == getgenv().CheckPlaceId3 then
-		-- [FIX U30/Lv500] 500-524: quest BOSS (SkyExp1Quest id 3, NPC Mole) -
-		-- lam quest boss toi 525 roi moi tro lai quest thuong (Royal Squad).
-		-- Update 30 (5/9/2026) doi ten "Wysper" -> "Sky Warlord" (cung vi tri,
-		-- cung LevelReq 500): tim ten moi truoc, ten cu sau, fallback ten moi.
-		-- GetBestQuest() bo qua quest boss 1 kill nen can nhanh rieng, neu
-		-- khong bot nhan mai quest Shanda Lv475 du da len Lv500.
-		nq, msn, idq = resolveBossQuest({ "Sky Warlord", "Wysper" }, "SkyExp1Quest", "Sky Warlord", 3, Level)
 	end
 	-- Neu chua co (cac level con lai, hoac da doi sea thanh cong),
 	-- dung GetBestQuest tu QuestsModule dong.
@@ -5416,13 +5283,9 @@ function GetQuest()
 				nq, msn, idq = resolveLevelQuest("Fishman Commando", "FishmanQuest", "Fishman Commando", 2, Level)
 			elseif Level >= 450 and Level < 475 then
 				nq, msn, idq = resolveLevelQuest("God's Guard", "SkyExp1Quest", "God's Guard", 1, Level)
-				elseif Level >= 475 and Level < 500 then
-					nq, msn, idq = resolveLevelQuest("Shanda", "SkyExp1Quest", "Shanda", 2, Level)
-				elseif Level >= 500 and Level < 525 then
-					-- [FIX U30/Lv500] Quest boss Sky Warlord (ten cu: Wysper,
-					-- SkyExp1Quest id 3) - lam toi 525 moi tro lai quest thuong.
-					nq, msn, idq = resolveBossQuest({ "Sky Warlord", "Wysper" }, "SkyExp1Quest", "Sky Warlord", 3, Level)
-				elseif Level >= 525 and Level < 550 then
+			elseif Level >= 475 and Level < 525 then
+				nq, msn, idq = resolveLevelQuest("Shanda", "SkyExp1Quest", "Shanda", 2, Level)
+			elseif Level >= 525 and Level < 550 then
 				nq, msn, idq = resolveLevelQuest("Royal Squad", "SkyExp2Quest", "Royal Squad", 1, Level)
 			elseif Level >= 550 and Level < 625 then
 				nq, msn, idq = resolveLevelQuest("Royal Soldier", "SkyExp2Quest", "Royal Soldier", 2, Level)
@@ -5436,18 +5299,8 @@ function GetQuest()
 
 	local q = {}
 
-	-- [FIX U30/Lv500] Chi ap dung "double quest" cho quest THUONG (>= 2 kill).
-	-- Quest boss 1 kill (Sky Warlord/Wysper Lv500, Lightning God Lv575, Cyborg
-	-- Lv675) phai giu nguyen target: khong thi sau khi xong boss, bot se doi
-	-- sang quest Shanda/God's Guard (ct > 1, LevelReq thap hon) => nhan nguoc
-	-- quest lv475.
-	local msnKills = _questKillCount(msn)
-	if
-		Level >= 10
-		and not GetQuestData()
-		and GetLastQuest() == msn
-		and (msnKills == nil or msnKills > 1)
-	then
+	-- Double quest
+	if Level >= 10 and not GetQuestData() and GetLastQuest() == msn then
 		local cache = QuestController.CachedQuestData
 		for rnq, v in next, cache do
 			if typeof(v) == "table" then
@@ -6195,12 +6048,7 @@ function DetectPartSpawnMob(V, H)
 		-- -> lap di lap lai teleport toi spawnpoint khong ton tai -> farm "dung yen".
 		-- Dung pattern ro rang hon: space (optional punct) "Lv." (optional space)
 		-- so (optional punct)
-		-- [FIX Lv500] Boss spawner co dang "Wysper [Lv. 500] [Boss]" -> bo them
-		-- tag [Boss] de khop voi ten mob "Wysper" (quest boss Lv500 nay can tim
-		-- spawn point cua boss, khong thi bot khong chay toi cho boss sinh ra).
-		local out = tostring(C):gsub(" ?%p?Lv%. ?%d+%p?", "")
-		out = out:gsub("%s*%[%s*[Bb]oss%s*%]", "")
-		return out
+		return (tostring(C):gsub(" ?%p?Lv%. ?%d+%p?", ""))
 	end
 	local C = string.find(V, "Lv%.") and (B(V)) or V
 	for J, F in pairs(TableMobSpawn) do
@@ -6677,12 +6525,6 @@ function SpecialHop(C)
 	end
 end
 function FarmMethod()
-	-- [FIX RF v3] Tam dung farm khi Random Fruit dang dieu khien nhan vat
-	-- (bay toi NPC gacha). Neu khong 2 tween giang co -> khong bao gio toi
-	-- NPC -> gacha that bai mai. Co timeout 90s chong ket co chet.
-	if getgenv().__RFGachaMoving == true and (tick() - (getgenv().__RFGachaMovingAt or 0)) < 90 then
-		return
-	end
 	local selectedMethod = Settings["Select Method Farm"]
 	local f, V, H = selectedMethod
 	local C, J = 9999, 2
@@ -6886,7 +6728,6 @@ function FarmMethod()
 						or (DetectMob(f))
 						or not Settings["Start Farm"]
 						or not StackFarm
-						or getgenv().__RFGachaMoving == true
 					wait(1)
 				else
 					-- Mark an unavailable spawn as tried.  Without this, one typo or
@@ -6911,23 +6752,9 @@ function FarmMethod()
 						or (DetectMob(f))
 						or not Settings["Start Farm"]
 						or not StackFarm
-						or getgenv().__RFGachaMoving == true
 					wait(1)
 				else
-					-- [FIX U30] Quest boss (Sky Warlord 500-524): boss co thoi gian
-					-- hoi sinh (~10 phut) nen khong tim thay mob/spawn la binh
-					-- thuong -> dung cho tai cho, giu nguyen co Ignored de camp
-					-- diem spawn, log throttle de biet la "cho boss" chu khong ket.
-					if typeof(f) == "string" and _isBossQuestMob(f) then
-						if tick() - (getgenv().__BossWaitLogAt or 0) > 20 then
-							getgenv().__BossWaitLogAt = tick()
-							print("[Farm] Dang cho boss '"
-								.. tostring(f)
-								.. "' hoi sinh (quest boss 1 kill) - dung yen cho, khong phai ket.")
-						end
-					else
-						DeleteIgnoredMobSpawn()
-					end
+					DeleteIgnoredMobSpawn()
 				end
 			end
 		else
@@ -6947,7 +6774,7 @@ function FarmMethod()
 				else
 					toTarget(V.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
 				end
-			until not IsMobAlive(V) or not Settings["Start Farm"] or not StackFarm or getgenv().__RFGachaMoving == true
+			until not IsMobAlive(V) or not Settings["Start Farm"] or not StackFarm
 			if getgenv().QuestTrainer and getgenv().QuestTrainer.CountKillMob then
 				getgenv().QuestTrainer.CountKillMob = getgenv().QuestTrainer.CountKillMob + 1
 			end
@@ -9849,10 +9676,6 @@ function FarmSelectMob()
 	if not StackFarmOther then
 		return
 	end
-	-- [FIX RF v3] Nhu FarmMethod: nhuong di chuyen cho Random Fruit.
-	if getgenv().__RFGachaMoving == true and (tick() - (getgenv().__RFGachaMovingAt or 0)) < 90 then
-		return
-	end
 	local y = {}
 	for P, Y in next, Settings["Select Mob"], nil do
 		Y = _stripLvTag(P)
@@ -9936,9 +9759,7 @@ local y = {
 	"Magma Admiral",
 	"Fishman Lord",
 	"Wysper",
-	"Sky Warlord",
 	"Thunder God",
-	"Lightning God",
 	"Cyborg",
 	"Ice Admiral",
 	"Diamond",
@@ -9995,10 +9816,6 @@ AutoKillBossSection.CreateButton({ Title = "Refresh Boss" }, function()
 	y:GetNewList(TableBoss())
 end)
 function AutoKillBoss()
-	-- [FIX RF v3] Nhu FarmMethod: nhuong di chuyen cho Random Fruit.
-	if getgenv().__RFGachaMoving == true and (tick() - (getgenv().__RFGachaMovingAt or 0)) < 90 then
-		return
-	end
 	local y = if Settings["Kill All Boss"]
 		then (CheckNameBoss(TableBoss()))
 		else (CheckNameBoss(Settings["Select Boss"]))
@@ -10552,1404 +10369,157 @@ MultiRaidsSection.CreateToggle(
 		SaveSettings("Auto Multi Raid", b)
 	end
 )
--- ===== [FIX RANDOM DEVIL FRUIT v4] =====
--- v4 sua 6 nguyen nhan lam "bat Random Devil Fruit len ma khong quay duoc":
---   A) [NGUYEN NHAN CHINH] RF_FindSpinnerWindow() chi dung FindFirstChild, KHONG
---      kiem tra hien thi. Game tao san SpinnerWindow trong PlayerGui (dang an) nen:
---        * vong lap chinh nghi "spinner dang mo" -> chi goi RF_CloseSpinnerIfDone()
---          va KHONG BAO GIO goi RandomFruit();
---        * flow UI nghi "da quay xong" -> khoa 2h du chua mua lan nao.
---      Moi: RF_FindSpinnerWindow(requireVisible) + RF_IsSpinnerOpen() chi tinh la
---      mo khi cua so that su hien (Enabled/Visible ca chuoi cha).
---   B) Click bang VirtualInputManager thieu GuiService:GetGuiInset().Y:
---      AbsolutePosition tinh tu duoi thanh topbar, con VIM dung toa do toan man
---      hinh -> click lech len ~36px, khong bao gio trung nut. Moi: cong inset va
---      them che do click vat ly (RF_ClickButton(btn, "physical")) de xoay vong
---      phuong thuc click khi getconnections khong co tac dung.
---   C) Chi cho co dinh 12s de bay toi NPC gacha: NPC xa vai nghin studs (dang farm
---      o dao khac) -> chua toi noi da het han -> "khong the bay toi NPC" mai mai.
---      Moi: thoi gian cho tinh theo khoang cach (toi da 90s) va goi lai toTarget
---      moi 3s trong luc cho; xoay camera ve phia NPC truoc khi click vat ly.
---   D) Tin tuong mua thanh cong qua gia tri tra ve cua remote (result == true) hoac
---      qua viec SpinnerWindow "ton tai" -> khoa 2h oan. Moi: RF_VerifyPurchase()
---      gom bang chung: RE/SpinGacha, fruit moi (Tool/balo + inventory), beli giam.
---      Server noi OK nhung khong co bang chung -> kind = "unverified": khong thu
---      tiep remote khac (tranh mua 2 lan) nhung van chay flow UI.
---   E) Lang nghe ReplicatedStorage.Modules.Net["RE/SpinGacha"]: game tu ban ten
---      fruit khi quay xong -> xac nhan chinh xac, khong so "Auto Store Fruit" an
---      fruit truoc khi kip dem.
---   F) Chong ket: co Busy duoc reset sau 240s; thoi gian cho khi bi tu choi giam
---      tu 10 phut xuong 3 phut; them toa do gacha du phong theo sea khi khong tim
---      thay ten NPC (Sea 1 Middle Town / Sea 2 Cafe / Sea 3 Mansion).
---
--- ===== [FIX RANDOM DEVIL FRUIT v3 - Update 30] =====
--- v3 them (sau Update 30 ngay 5/9/2026 - Sea 1 Rework):
---   4) NPC gacha (Zioles) doi vi tri First Sea: Jungle -> Middletown, bang ten
---      tren dau doi thanh "Shop" thay vi "Blox Fruit Gacha" -> tim NPC theo ten
---      khop dung khong con thay. Moi: tim mo theo tu khoa (gacha/zioles/cousin,
---      khong phan biet hoa thuong) trong NPCs + workspace + NPCList.
---   5) Cung NPC co them "Magnet Gacha" (500 token, DUNG CHUNG cooldown 2h voi
---      roll Beli). Neu bam nham nut Magnet Event / nut token thi mat luot roll
---      thuong. Moi: loai tru moi nut co "magnet"/"token", chi bam nut roll Beli;
---      bo fallback mu "button thu 2" (vi tri option da doi), thay bang chon theo
---      diem text + thu lan luot tung nut an toan.
---   6) FarmMethod/FarmSelectMob/AutoKillBoss goi toTarget lien tuc nen giang co
---      voi gacha khi gacha can bay toi NPC -> "khong the bay toi NPC gacha" mai.
---      Moi: co __RFGachaMoving tam dung moi farm khi UI flow dang di chuyen.
---   7) Xac nhan mua them kenh dem Blox Fruit trong inventory (song sot ca khi
---      "Auto Store Fruit" an Tool ngay lap tuc); nhan dien server bao cooldown
---      (tra ve so giay con lai / chuoi cooldown) de cho dung thay vi spam;
---      kiem tra truoc neu beli khong du thi cho 60s thay vi bay toi NPC vo ich.
--- Loi user bao: "bat Random Devil Fruit len ma khong quay duoc fruit random".
--- Nguyen nhan (doi chieu voi script gacha that cua game va cac hub con dung 2026):
---   1) Duong remote cu "RF/GachaNetworkRF" voi {Context="Purchase", BoxName=...}
---      KHONG ton tai trong game (khong script nao tham chieu ten remote nay) ->
---      moi lan deu that bai. Remote that su van dung duoc la Remotes.CommF_ voi:
---        CommF_:InvokeServer("Cousin", "Buy")         -- dung rong, van hoat dong
---        CommF_:InvokeServer("Cousin", "DLCBoxData")  -- dang dung (Zynkore Hub 9/2026)
---        CommF_:InvokeServer("Cousin", <BoxName banner dang active>)
---   2) Flow UI fallback bam sai nut dialogue: truoc do khi khong khop text thi lay
---      "buttons[1]" (nut dau tien) -> thuong bam nham nut sai, khong mo duoc
---      ZiolesGacha_Window -> lui mai mai, khong bao gio quay duoc. Trong dialogue
---      gacha cua game, nut Random Fruit la button THU 2 theo chieu doc.
---   3) Khong kiem chung mua thanh cong: truoc do nhan return code lai cua remote
---      gia lam ket qua. Moi: xac nhan bang fruit Tool moi xuat hien trong
---      balo/nguoi, Beli bi tru ~gia quay, SpinnerWindow mo, hoac return 1/true.
--- Fix:
---   - Duong 1: CommF_ "Cousin" (3 cach goi), chi thu cach tiep khi cach truoc hoan
---     toan khong anh huong gi (khong tru Beli, khong co fruit moi) de khong mua 2 lan.
---   - Duong 2: fallback UI (NPC "Blox Fruit Gacha" -> dialogue -> ZiolesGacha_Window
---     .PurchaseButton -> SpinnerWindow). Chon dung nut Random Fruit (text match +
---     fallback button thu 2 theo thu tu) va LAP LAI cho toi khi thay PurchaseButton.
---   - Quay xong cho dung 2 gio (gioi han cua game); that bai -> backoff 5..60s.
---   - Moi buoc nil-safe + pcall; log co throttle (1 lan/30s) de khong full console.
--- Gioi han scope cac helper gacha: Luau chi cho phep 200 local registers trong mot chunk.
--- Callback o cuoi file van can kiem tra spinner nen giu lai duy nhat ham nay.
-local RF_IsSpinnerOpen
-do
+-- ===== [FIX RANDOM DEVIL FRUIT] =====
+-- Remote chuan: game.ReplicatedStorage.Modules.Net["RF/GachaNetworkRF"]:InvokeServer({ Context = "Purchase", BoxName = "ZiolesGacha" })
+-- Thu tu thu: BoxName "ZiolesGacha" TRUOC, chi fallback sang BoxName cua banner event khi box do that bai.
+-- Moi buoc deu boc pcall; that bai => log ly do + backoff tang dan (tranh spam remote tu vong lap chinh 0.5s/lan).
+local RF_GACHA_REMOTE_PATH = "RF/GachaNetworkRF"
+local RF_GACHA_PRIMARY_BOX = "ZiolesGacha"
 local RF_GACHA_MIN_LEVEL = 50
-local RF_GACHA_COOLDOWN = 7200 -- game gioi han 1 lan quay / 2 gio
 local RF_GACHA_BACKOFF_MIN = 5 -- cho cho lan that bai dau tien (giay)
 local RF_GACHA_BACKOFF_MAX = 60 -- tran backoff (giay)
 local RF_GACHA_BACKOFF_LEVEL = 15 -- backoff khi chua du level (khong tang dan)
-local RF_GACHA_SPIN_WAIT = 30 -- cho toi da 30s cho spinner quay xong
--- [FIX v4] Cu chi cho 12s de bay toi NPC: NPC gacha co the cach vai nghin studs
--- (dang farm o dao khac) -> tween chua toi noi da het han -> bao
--- "khong the bay toi NPC gacha" mai mai. Moi: thoi gian cho tinh theo khoang cach
--- (tiep tuc goi lai toTarget trong luc cho de tween khong bi huy).
-local RF_GACHA_NPC_WAIT_MIN = 20
-local RF_GACHA_NPC_WAIT_MAX = 90
-local RF_GACHA_BUSY_TIMEOUT = 240 -- reset co Busy neu luong truoc bi huy giua chung
 local RF_GACHA_LOG_PREFIX = "[RandomFruit] "
-local RF_GACHA_STATE = {
-	NextTry = 0,
-	Backoff = 0,
-	Busy = false,
-	BusyAt = 0,
-	Attempts = 0,
-	Success = 0,
-	Level = 0,
-	LastReason = nil,
-	LastFruit = nil,
-	SpinSeen = 0, -- tick() lan cu game ban RE/SpinGacha (bang chung chac chan nhat)
-	SpinHooked = false,
-}
--- [FIX v4] Vi tri du phong cua NPC gacha khi khong tim thay object/NPCList:
--- Sea 1 = Middle Town, Sea 2 = Cafe (toa do NPC that), Sea 3 = Mansion.
-local RF_GACHA_FALLBACK_POS = {
-	[2753915549] = Vector3.new(-655.8, 12, 1436.7),
-	[85211729168715] = Vector3.new(-655.8, 12, 1436.7),
-	[4442272183] = Vector3.new(-426.49, 73.02, 385.14),
-	[79091703265657] = Vector3.new(-426.49, 73.02, 385.14),
-	[7449423635] = Vector3.new(-12463.87, 374.91, -7523.77),
-	[100117331123089] = Vector3.new(-12463.87, 374.91, -7523.77),
-}
+local RF_GACHA_STATE = { NextTry = 0, Backoff = 0, Attempts = 0, Success = 0, LastReason = nil }
 
--- Log co throttle: cung 1 thong diep chi in 1 lan / 30s (tranh full console)
-local RF_lastLogMsg, RF_lastLogAt = nil, 0
-local function RF_GachaLog(msg, force)
-	msg = tostring(msg)
-	local now = tick()
-	if not force and msg == RF_lastLogMsg and (now - RF_lastLogAt) < 30 then
-		return
-	end
-	RF_lastLogMsg, RF_lastLogAt = msg, now
-	local ok = pcall(warn, RF_GACHA_LOG_PREFIX .. msg)
-	if not ok then
-		pcall(print, RF_GACHA_LOG_PREFIX .. msg)
+local function RF_GachaLog(b)
+	local E = RF_GACHA_LOG_PREFIX .. tostring(b)
+	local l, y = pcall(warn, E)
+	if not l then
+		pcall(print, E)
 	end
 end
 
--- ==================== [FIX v4] Lang nghe ket qua quay tu game ====================
--- ReplicatedStorage.Modules.Net["RE/SpinGacha"] la RemoteEvent ma game tu ban xuong
--- khi mot lan quay hoan tat (co ten fruit). Day la bang chung chac chan nhat vi no
--- khong phu thuoc UI, Tool, balo hay inventory (cac kenh nay co the bi "Auto Store
--- Fruit" an mat truoc khi kip dem hoac bi cham).
-local RF_GACHA_SPIN_EVENT = nil
-local function RF_GetSpinEvent()
-	if RF_GACHA_SPIN_EVENT then
-		return RF_GACHA_SPIN_EVENT
-	end
-	local ok, ev = pcall(function()
-		local modules = game:GetService("ReplicatedStorage"):FindFirstChild("Modules")
-		local net = modules and modules:FindFirstChild("Net")
-		local found = net and net:FindFirstChild("RE/SpinGacha")
-		if not found and net then
-			-- du phong: game co the dat ten khac hoac nam trong thu muc con
-			for _, obj in ipairs(net:GetDescendants()) do
-				if obj:IsA("RemoteEvent") and string.find(string.lower(obj.Name), "spingacha", 1, true) then
-					found = obj
-					break
-				end
-			end
+local function RF_GachaGetRemote()
+	local E, l, y = pcall(function()
+		local b = game:GetService("ReplicatedStorage").Modules.Net
+		if not b then
+			return nil, "Modules.Net khong ton tai"
 		end
-		return found
-	end)
-	if ok and ev then
-		RF_GACHA_SPIN_EVENT = ev
-	end
-	return RF_GACHA_SPIN_EVENT
-end
-
-local function RF_HookSpinEvent()
-	if RF_GACHA_STATE.SpinHooked then
-		return
-	end
-	local ev = RF_GetSpinEvent()
-	if not ev then
-		return
-	end
-	RF_GACHA_STATE.SpinHooked = true
-	pcall(function()
-		ev.OnClientEvent:Connect(function(data)
-			local name = nil
-			pcall(function()
-				if type(data) ~= "table" then
-					return
-				end
-				local winners = data.Winners or data.winners
-				if type(winners) == "table" and type(winners[1]) == "table" then
-					name = winners[1].DisplayName or winners[1].StorageName or winners[1].Name
-				end
-				if not name and type(data.DisplayName) == "string" then
-					name = data.DisplayName
-				end
-				if not name and type(data.Fruit) == "string" then
-					name = data.Fruit
-				end
-			end)
-			RF_GACHA_STATE.SpinSeen = tick()
-			if name then
-				RF_GACHA_STATE.LastFruit = tostring(name)
-			end
-			RF_GachaLog("game bao vua quay xong" .. (name and (": " .. tostring(name)) or ""), true)
-		end)
-	end)
-end
-
--- true neu game da ban ket qua quay trong vong `since` giay tro lai day.
-local function RF_SpinSeenSince(startTick)
-	local seen = tonumber(RF_GACHA_STATE.SpinSeen) or 0
-	return seen > 0 and seen >= (tonumber(startTick) or 0) - 1
-end
-
--- Gia quay gacha (normal user): 25000 + 150 * (Lv - 1); premium giam 20%.
-local function RF_GachaPrice(level)
-	return 25000 + 150 * (math.max(tonumber(level) or 1, 1) - 1)
-end
-
-local function RF_GachaApplyBackoff(reason)
-	local backoff = RF_GACHA_STATE.Backoff
-	if backoff <= 0 then
-		backoff = RF_GACHA_BACKOFF_MIN
-	else
-		backoff = backoff * 2
-	end
-	if backoff > RF_GACHA_BACKOFF_MAX then
-		backoff = RF_GACHA_BACKOFF_MAX
-	end
-	RF_GACHA_STATE.Backoff = backoff
-	RF_GACHA_STATE.NextTry = tick() + backoff
-	RF_GachaLog("that bai (" .. tostring(reason) .. ") - cho " .. tostring(backoff) .. "s roi thu lai")
-end
-
-local function RF_GachaOnSuccess(via)
-	RF_GACHA_STATE.Success = RF_GACHA_STATE.Success + 1
-	RF_GACHA_STATE.Backoff = 0
-	RF_GACHA_STATE.NextTry = tick() + RF_GACHA_COOLDOWN
-	RF_GACHA_STATE.LastReason = nil
-	RF_GachaLog(
-		"quay thanh cong qua "
-			.. tostring(via)
-			.. " (tong "
-			.. tostring(RF_GACHA_STATE.Success)
-			.. " lan) - cho "
-			.. tostring(RF_GACHA_COOLDOWN / 60)
-			.. " phut (cooldown gacha cua game)",
-		true
-	)
-	-- Thong bao ra man hinh de biet da quay that su (va duoc fruit gi neu game co ban)
-	pcall(function()
-		if A and A.CreateNoti then
-			local fruit = RF_GACHA_STATE.LastFruit
-			A.CreateNoti({
-				Title = "Random Devil Fruit",
-				Desc = "Da quay thanh cong"
-					.. (fruit and (": " .. tostring(fruit)) or "")
-					.. " - cho "
-					.. tostring(RF_GACHA_COOLDOWN / 60)
-					.. " phut",
-				ShowTime = 5,
-			})
+		local P = b[RF_GACHA_REMOTE_PATH] or b:FindFirstChild(RF_GACHA_REMOTE_PATH)
+		if not P then
+			return nil, "khong tim thay remote " .. RF_GACHA_REMOTE_PATH
 		end
-	end)
-end
-
-local function RF_GetLevelBeli()
-	local level, beli = 0, 0
-	pcall(function()
-		level = tonumber(t.Data.Level.Value) or 0
-	end)
-	pcall(function()
-		beli = tonumber(t.Data.Beli.Value) or 0
-	end)
-	return level, beli
-end
-
--- Dem so fruit Tool (physical fruit) dang co tren nguoi + trong balo.
-local function RF_CountFruitTools()
-	local count = 0
-	for _, container in ipairs({ t.Backpack, t.Character }) do
-		if container then
-			local ok, n = pcall(function()
-				local c = 0
-				for _, tool in ipairs(container:GetChildren()) do
-					if
-						tool:IsA("Tool")
-						and (tool:GetAttribute("OriginalName") ~= nil or string.find(tool.Name, "Fruit"))
-					then
-						c = c + 1
-					end
-				end
-				return c
-			end)
-			if ok and n then
-				count = count + n
-			end
+		if type(P.InvokeServer) ~= "function" then
+			return nil, "remote " .. RF_GACHA_REMOTE_PATH .. " khong co InvokeServer (khong phai RemoteFunction)"
 		end
-	end
-	return count
-end
-
--- [FIX U30] Dem tong so Blox Fruit trong inventory (qua ItemReplicationService,
--- giong ham B()). "Auto Store Fruit" chay moi 0.5s co the an Tool ngay sau khi
--- quay xong -> dem Tool bi sot; dem inventory thi song sot.
-local function RF_CountInventoryFruits()
-	local ok, n = pcall(function()
-		local c = 0
-		for _, e in ipairs(B()) do
-			if e.Type == "Blox Fruit" and (e.Count or 0) > 0 then
-				c = c + (e.Count or 0)
-			end
-		end
-		return c
+		return P, nil
 	end)
-	if ok and type(n) == "number" then
-		return n
+	if not E then
+		return nil, "loi khi lay remote: " .. tostring(l)
 	end
-	return nil -- khong doc duoc inventory -> bo qua kenh nay
+	return l, y
 end
 
--- Lay BoxName dang active (banner event) de goi "Cousin" voi box do.
 local function RF_GachaGetBannerBox()
-	local ok, box = pcall(function()
-		local controllers = game:GetService("ReplicatedStorage"):FindFirstChild("Controllers")
-		local banner = controllers and controllers:FindFirstChild("BannerClient")
-		if not banner then
-			return nil
+	local E, l, y = pcall(function()
+		local b = game:GetService("ReplicatedStorage").Controllers.BannerClient
+		if not b then
+			return nil, "Controllers.BannerClient khong ton tai"
 		end
-		local mod = require(banner)
-		if type(mod) ~= "table" or type(mod.TryGetBannerItemIfActiveAsync) ~= "function" then
-			return nil
+		local P = require(b)
+		if type(P) ~= "table" or type(P.TryGetBannerItemIfActiveAsync) ~= "function" then
+			return nil, "BannerClient khong co TryGetBannerItemIfActiveAsync"
 		end
-		local item = mod.TryGetBannerItemIfActiveAsync()
-		if type(item) == "table" and item.BoxName then
-			return item.BoxName
+		local R = P.TryGetBannerItemIfActiveAsync()
+		if type(R) ~= "table" or not R.BoxName then
+			return nil, "banner event khong active hoac khong tra ve BoxName"
 		end
-		return nil
+		return R.BoxName, nil
 	end)
-	if ok then
-		return box
+	if not E then
+		return nil, "BannerClient loi: " .. tostring(l)
 	end
-	return nil
+	return l, y
 end
 
--- ==================== Duong 1: mua qua remote CommF_ "Cousin" ====================
--- Moi cach goi duoc kiem chung sau khi goi (fruit moi / Beli tru / return 1|true).
--- Tra ve: ok, info, affected, cooldownHint (affected = da co tac dung gi do
--- nhung khong xac nhan duoc thanh cong -> KHONG duoc thu cach goi tiep, de
--- khong bi mua 2 lan; cooldownHint = so giay server bao con cooldown).
-local function RF_GachaInvokeCousin(args)
-	local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-	local commF = remotes and remotes:FindFirstChild("CommF_")
-	if not commF then
-		return false, "khong tim thay Remotes.CommF_", false, nil
-	end
-	RF_HookSpinEvent()
-	local fruitsBefore = RF_CountFruitTools()
-	local invBefore = RF_CountInventoryFruits()
-	local _, beliBefore = RF_GetLevelBeli()
-	local spinStart = tick()
-	local ok, result = pcall(function()
-		return commF:InvokeServer(unpack(args))
-	end)
-	if not ok then
-		return false, "InvokeServer loi (" .. table.concat(args, "/") .. "): " .. tostring(result), false, nil
-	end
-	-- Kiem chung qua nhieu moc: fruit co the vao balo ngay sau khi tra ve, Beli co
-	-- the bi tru cham; dong thoi "Auto Store Fruit" co the an fruit di sau ~1s -> kiem
-	-- tra lai sau 1.5s va 3.5s de khong bo sot. [FIX U30] Them kenh dem inventory
-	-- (song sot ca khi Tool bi store ngay lap tuc).
-	local function snapshot()
-		return RF_CountFruitTools(), (select(2, RF_GetLevelBeli())), RF_CountInventoryFruits()
-	end
-	local price = RF_GachaPrice(RF_GACHA_STATE.Level)
-	local spentTotal = 0
-	local gotFruit = false
-	for _, dt in ipairs({ 0, 1.5, 2 }) do
-		if dt > 0 then
-			task.wait(dt)
+local function RF_GachaGetBoxList()
+	local E = {}
+	table.insert(E, { Name = RF_GACHA_PRIMARY_BOX, Source = "mac dinh" })
+	local l, y = RF_GachaGetBannerBox()
+	if l then
+		if l ~= RF_GACHA_PRIMARY_BOX then
+			table.insert(E, { Name = l, Source = "banner event" })
 		end
-		local fruitsNow, beliNow, invNow = snapshot()
-		if fruitsNow > fruitsBefore then
-			gotFruit = true
-		end
-		if invBefore and invNow and invNow > invBefore then
-			gotFruit = true
-		end
-		local spent = beliBefore - beliNow
-		if spent > spentTotal then
-			spentTotal = spent
-		end
-		local paid = spentTotal >= price * 0.5 -- premium duoc giam 20% nen de nguong 50%
-		local serverOk = result == 1 or result == true or result == "Success" or result == "success"
-		-- [FIX v4] Chi nhan thanh cong khi CO BANG CHUNG that su:
-		--   * co fruit moi (Tool/balo hoac inventory), hoac
-		--   * beli bi tru >= nua gia quay, hoac
-		--   * game ban RE/SpinGacha (chan nhat).
-		-- Rieng khi khong doc duoc Beli (beliBefore <= 0) thi moi tinh loi xac nhan
-		-- cua server. Truoc day chi can result == true la khoa 2h -> neu server tra
-		-- true nhung khong quay gi (hoac ket qua bi tre) thi tinh nang chet 2h.
-		if gotFruit then
-			return true, "nhan duoc fruit", true, nil
-		end
-		if paid then
-			return true, "da tru beli", true, nil
-		end
-		if RF_SpinSeenSince(spinStart) then
-			return true, "game bao quay xong", true, nil
-		end
-		if serverOk and beliBefore <= 0 then
-			return true, "server xac nhan thanh cong (khong doc duoc beli)", true, nil
-		end
-	end
-	-- [FIX U30] Server bao con cooldown: tra ve so giay con lai hoac chuoi
-	-- cooldown -> cho dung thoi gian do thay vi spam thu lai moi 5-60s.
-	if type(result) == "number" and result > 1 and result <= RF_GACHA_COOLDOWN and spentTotal <= 0 then
-		return false, "server bao con cooldown " .. tostring(math.floor(result)) .. "s", false, math.floor(result)
-	end
-	if type(result) == "string" then
-		local low = string.lower(result)
-		if low:find("cooldown") or low:find("cool down") or low:find("wait") or low:find("hour") or low:find("minute") then
-			return false, "server bao cooldown: " .. result, false, 600
-		end
-	end
-	local affected = spentTotal > 0
-	local invDelta = ""
-	if invBefore then
-		local invNow = RF_CountInventoryFruits()
-		invDelta = ", kho +" .. tostring((invNow or invBefore) - invBefore)
-	end
-	-- [FIX v4] Server noi OK nhung khong thay bang chung (fruit moi / beli giam /
-	-- RE/SpinGacha): khong duoc tinh la thanh cong (se khoa 2h oan), nhung cung
-	-- khong duoc bo qua hoan toan. Tra ve kind = "unverified" de khong thu tiep cac
-	-- cach goi remote khac (tranh mua 2 lan) ma chuyen sang flow UI - noi co the
-	-- nhin thay trang thai that cua game.
-	local kind = nil
-	local head
-	if result == 1 or result == true or result == "Success" or result == "success" then
-		head = "server bao OK nhung khong co bang chung (fruit/beli/spin)"
-		kind = "unverified"
 	else
-		head = "server tu choi (" .. table.concat(args, "/") .. ")"
+		RF_GachaLog("bo qua box banner: " .. tostring(y))
 	end
-	return false,
-		head
-			.. ", tra ve: "
-			.. tostring(result)
-			.. "; fruit +"
-			.. tostring(RF_CountFruitTools() - fruitsBefore)
-			.. invDelta
-			.. ", beli -"
-			.. tostring(spentTotal),
-		affected,
-		nil,
-		kind
+	return E
 end
 
--- ==================== Duong 2: chay dung UI cua game ====================
-local function RF_FireConns(signal)
-	local any = false
-	pcall(function()
-		for _, conn in pairs(getconnections(signal)) do
-			any = true
-			if conn.Function then
-				conn.Function()
-			else
-				conn:Fire()
-			end
-		end
+local function RF_GachaPurchase(E, l)
+	local y, P = pcall(function()
+		return E:InvokeServer({ Context = "Purchase", BoxName = l })
 	end)
-	return any
+	if not y then
+		return false, "InvokeServer loi (BoxName=" .. tostring(l) .. "): " .. tostring(P)
+	end
+	if P == 1 or P == true or type(P) == "table" then
+		return true, nil
+	end
+	return false, "server tu choi (BoxName=" .. tostring(l) .. "), tra ve: " .. tostring(P)
 end
 
--- Click 1 GuiButton: thu getconnections truoc (giong cac cho khac trong script),
--- du phong VirtualInputManager neu executor khong ho tro getconnections.
--- [FIX v4 - QUAN TRONG] AbsolutePosition tinh tu vung an toan (duoi thanh topbar),
--- con VirtualInputManager nhan toa do theo TOAN MAN HINH -> phai cong them
--- GuiService:GetGuiInset().Y, neu khong click se lech len ~36px va KHONG BAO GIO
--- trung nut (moi ln quay deu that bai am tham).
--- mode: "auto" = getconnections truoc, "physical" = bat click that (dung khi
--- getconnections co nhung khong co tac dung).
-local function RF_ClickButton(btn, mode)
-	if not btn then
-		return false
-	end
-	local physical = mode == "physical"
-	local fired = false
-	if not physical then
-		fired = RF_FireConns(btn.MouseButton1Click) or RF_FireConns(btn.Activated)
-	end
-	if physical or not fired then
-		pcall(function()
-			local vim = game:GetService("VirtualInputManager")
-			local guiService = game:GetService("GuiService")
-			local insetY = 0
-			pcall(function()
-				insetY = guiService:GetGuiInset().Y or 0
-			end)
-			local pos = btn.AbsolutePosition
-			local size = btn.AbsoluteSize
-			local cx = pos.X + size.X / 2
-			local cy = pos.Y + size.Y / 2 + insetY
-			vim:SendMouseMoveEvent(cx, cy, game)
-			task.wait(0.06)
-			vim:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-			task.wait(0.08)
-			vim:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-		end)
-	end
-	return true
-end
-
--- [FIX U30] Ten NPC gacha thay doi theo update (truoc: "Blox Fruit Gacha" /
--- "Blox Fruits Dealer Cousin" o Jungle; nay: Zioles o Middletown voi tag "Shop").
--- Tim mo theo tu khoa de song sot qua cac lan doi ten/doi cho.
-local RF_GACHA_NPC_KEYWORDS = { "gacha", "zioles", "cousin" }
-local function RF_IsGachaNpcName(name)
-	local low = string.lower(tostring(name or ""))
-	if low == "" then
-		return false
-	end
-	for _, k in ipairs(RF_GACHA_NPC_KEYWORDS) do
-		if string.find(low, k, 1, true) then
-			return true
-		end
-	end
-	return false
-end
-
-local function RF_NpcHasPrompt(obj)
-	local ok, found = pcall(function()
-		for _, d in ipairs(obj:GetDescendants()) do
-			if d:IsA("ClickDetector") or d:IsA("ProximityPrompt") then
-				return true
-			end
-		end
-		return false
-	end)
-	return ok and found == true
-end
-
-local function RF_FindGachaNpc()
-	local fallback = nil
-	local function consider(obj)
-		if not RF_IsGachaNpcName(obj.Name) then
-			return nil
-		end
-		-- Uu tien NPC co prompt/click (bam duoc ngay); giu lai ung vien dau
-		-- tien lam du phong neu khong co ung vien nao co prompt.
-		if RF_NpcHasPrompt(obj) then
-			return obj
-		end
-		if not fallback then
-			fallback = obj
-		end
-		return nil
-	end
-	-- 1) Thu muc NPCs (noi game dat NPC quest/shop)
-	local npcsFolder = workspace:FindFirstChild("NPCs")
-	if npcsFolder then
-		for _, obj in ipairs(npcsFolder:GetChildren()) do
-			local hit = consider(obj)
-			if hit then
-				return hit
-			end
-		end
-		if fallback then
-			return fallback
-		end
-	end
-	-- 2) Con truc tiep cua workspace
-	for _, obj in ipairs(workspace:GetChildren()) do
-		local hit = consider(obj)
-		if hit then
-			return hit
-		end
-	end
-	if fallback then
-		return fallback
-	end
-	-- 3) Quet sau (NPC co the nam trong workspace.Map.<TenDao> sau rework)
-	pcall(function()
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("Model") and RF_IsGachaNpcName(obj.Name) then
-				local hit = consider(obj)
-				if hit then
-					fallback = hit
-					error("__found__")
-				end
-			end
-		end
-	end)
-	return fallback
-end
-
--- Du phong khi khong tim thay object NPC: lay vi tri gacha tu NPCList cua
--- GuideModule (game luu san vi tri NPC). Tra ve Vector3 hoac nil.
-local function RF_FindGachaPosInNPCList()
-	local ok, list = pcall(getNPCList)
-	if not ok or type(list) ~= "table" then
-		return nil
-	end
-	local hrp = t.Character and t.Character:FindFirstChild("HumanoidRootPart")
-	local best, bestD = nil, math.huge
-	for key, v in next, list do
-		if typeof(v) == "table" and v.Position then
-			local nm = tostring(key) .. " " .. tostring(v.Name or "")
-			if RF_IsGachaNpcName(nm) then
-				local pos = nil
-				pcall(function()
-					if typeof(v.Position) == "Vector3" then
-						pos = v.Position
-					elseif typeof(v.Position) == "CFrame" then
-						pos = v.Position.Position
-					end
-				end)
-				if pos then
-					local d = hrp and (pos - hrp.Position).Magnitude or 0
-					if d < bestD then
-						best, bestD = pos, d
-					end
-				end
-			end
-		end
-	end
-	return best
-end
-
-local function RF_NpcPosition(npc)
-	if not npc then
-		return nil
-	end
-	local part = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head") or npc.PrimaryPart
-	if part and part:IsA("BasePart") then
-		return part.Position
-	end
-	local sum = Vector3.new(0, 0, 0)
-	local count = 0
-	for _, p in ipairs(npc:GetDescendants()) do
-		if p:IsA("BasePart") then
-			sum = sum + p.Position
-			count = count + 1
-		end
-	end
-	if count > 0 then
-		return sum / count
-	end
-	return nil
-end
-
--- Bay toi gan NPC roi bam vao NPC de mo dialogue (dung toTarget nhu moi cho khac).
--- [FIX U30] Chap nhan ca object NPC lan Vector3/CFrame (vi tri du phong tu
--- NPCList khi khong tim thay object). Luon kich hoat moi prompt/click gan
--- vi tri den (phong NPC doi ten/model sau rework).
--- [FIX v4]
---   * Thoi gian cho tinh theo khoang cach (cu: co dinh 12s -> NPC xa thi khong bao
---     gio toi) va GOI LAI toTarget moi 3s trong luc cho de tween song sot.
---   * Xoay camera ve phia NPC truoc khi click vat ly (cu: WorldToScreenPoint voi
---     camera dang huong cho khac -> toa do nam ngoai man hinh, click vung nguoi).
---   * wideScan = false de bo qua viec quet toan bo workspace (chi lam 1 lan dau).
-local function RF_GoClickNpc(npcOrPos, wideScan)
-	local npc, pos = nil, nil
-	if typeof(npcOrPos) == "Vector3" then
-		pos = npcOrPos
-	elseif typeof(npcOrPos) == "CFrame" then
-		pos = npcOrPos.Position
+local function RF_GachaApplyBackoff(b)
+	local E = RF_GACHA_STATE.Backoff
+	if E <= 0 then
+		E = RF_GACHA_BACKOFF_MIN
 	else
-		npc = npcOrPos
-		pos = RF_NpcPosition(npc)
+		E = E * 2
 	end
-	if not pos then
-		return false
+	if E > RF_GACHA_BACKOFF_MAX then
+		E = RF_GACHA_BACKOFF_MAX
 	end
-	local hrp = t.Character and t.Character:FindFirstChild("HumanoidRootPart")
-	if not hrp then
-		return false
-	end
-	local dist = (hrp.Position - pos).Magnitude
-	-- ~250 studs/s la toc do thuc te sau khi tru thoi gian tang toc cua tween
-	local waitFor = math.min(RF_GACHA_NPC_WAIT_MAX, math.max(RF_GACHA_NPC_WAIT_MIN, dist / 250 + 12))
-	local deadline = tick() + waitFor
-	local lastPush = 0
-	if dist > 12 then
-		pcall(toTarget, CFrame.new(pos) * CFrame.new(0, 4, 0))
-		lastPush = tick()
-	end
-	while tick() < deadline do
-		dist = (hrp.Position - pos).Magnitude
-		if dist <= 12 then
-			break
-		end
-		if tick() - lastPush >= 3 then
-			-- giu tween song: goi lai toTarget dinh ky (farm da tam dung trong flow)
-			pcall(toTarget, CFrame.new(pos) * CFrame.new(0, 4, 0))
-			lastPush = tick()
-		end
-		task.wait(0.25)
-	end
-	dist = (hrp.Position - pos).Magnitude
-	if dist > 60 then
-		RF_GachaLog(
-			"van con cach NPC gacha "
-				.. tostring(math.floor(dist))
-				.. " studs sau "
-				.. tostring(math.floor(waitFor))
-				.. "s (se thu lai)"
-		)
-		return false
-	end
-	if npc then
-		pcall(function()
-			for _, obj in ipairs(npc:GetDescendants()) do
-				if obj:IsA("ClickDetector") then
-					pcall(fireclickdetector, obj)
-				elseif obj:IsA("ProximityPrompt") then
-					pcall(fireproximityprompt, obj)
-				end
-			end
-		end)
-	end
-	-- Kich hoat moi prompt/clickdetector trong ban kinh 18 studs quanh diem
-	-- den (cach takeQuest van lam): bat duoc ca NPC ten la khac.
-	if wideScan ~= false then
-		pcall(function()
-			for _, obj in ipairs(workspace:GetDescendants()) do
-				if obj:IsA("ProximityPrompt") then
-					local parent = obj.Parent
-					if parent and parent:IsA("BasePart") and (parent.Position - hrp.Position).Magnitude < 18 then
-						pcall(fireproximityprompt, obj)
-					end
-				elseif obj:IsA("ClickDetector") then
-					local parent = obj.Parent
-					if parent and parent:IsA("BasePart") and (parent.Position - hrp.Position).Magnitude < 14 then
-						pcall(fireclickdetector, obj)
-					end
-				end
-			end
-		end)
-	end
-	-- [FIX v4] Huong camera ve NPC truoc khi click that (chi chinh huong nhin,
-	-- giu nguyen vi tri camera).
-	pcall(function()
-		local cam = workspace.CurrentCamera
-		if cam then
-			local from = cam.CFrame.Position
-			if (from - pos).Magnitude > 1 then
-				cam.CFrame = CFrame.new(from, pos)
-				task.wait(0.2)
-			end
-		end
-	end)
-	pcall(function()
-		local cam = workspace.CurrentCamera
-		local screenPos, onScreen = cam:WorldToScreenPoint(pos)
-		if onScreen then
-			local vim = game:GetService("VirtualInputManager")
-			vim:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
-			task.wait(0.05)
-			vim:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
-			task.wait(0.08)
-			vim:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
-		end
-	end)
-	task.wait(0.4)
-	return true
-end
-
--- Kiem tra UI dang hien: ScreenGui dung Enabled, GuiObject kiem ca chuoi Parent
--- (truoc chi check frame.Visible -> nham voi frame bi cha an).
-local function RF_IsGuiVisible(frame)
-	if frame == nil then
-		return false
-	end
-	local ok, visible = pcall(function()
-		if frame:IsA("ScreenGui") then
-			return frame.Enabled == true
-		end
-		if not frame:IsA("GuiObject") then
-			return false
-		end
-		local current = frame
-		while current and current:IsA("GuiObject") do
-			if current.Visible ~= true then
-				return false
-			end
-			current = current.Parent
-		end
-		if current and current:IsA("ScreenGui") then
-			return current.Enabled == true
-		end
-		return true
-	end)
-	return ok and visible == true
-end
-
-local function RF_FindDialogueFrame()
-	local pg = t.PlayerGui
-	if not pg then
-		return nil
-	end
-	local main = pg:FindFirstChild("Main")
-	local dlg = main and (main:FindFirstChild("Dialogue") or main:FindFirstChild("DialogueFrame"))
-	if RF_IsGuiVisible(dlg) then
-		return dlg
-	end
-	for _, gui in ipairs(pg:GetChildren()) do
-		if gui:IsA("ScreenGui") then
-			if gui.Name == "DialogueGui" and RF_IsGuiVisible(gui) then
-				return gui
-			end
-			for _, name in ipairs({ "Dialogue", "DialogueFrame", "Dialog" }) do
-				local f = gui:FindFirstChild(name, true)
-				if RF_IsGuiVisible(f) then
-					return f
-				end
-			end
-		end
-	end
-	return nil
-end
-
--- Gop text cua 1 button (text rieng + text cua cac TextLabel/TextButton con).
-local function RF_CollectButtonText(btn)
-	local txt = ""
-	pcall(function()
-		for _, child in ipairs(btn:GetDescendants()) do
-			if child:IsA("TextLabel") or child:IsA("TextButton") then
-				local ok, s = pcall(function()
-					return child.Text
-				end)
-				if ok and type(s) == "string" then
-					txt = txt .. " " .. s
-				end
-			end
-		end
-		local ok, s = pcall(function()
-			return btn.Text
-		end)
-		if ok and type(s) == "string" then
-			txt = txt .. " " .. s
-		end
-	end)
-	return string.lower(txt)
-end
-
--- Bam chon option "Random Fruit" trong dialogue cua NPC gacha.
--- [FIX U30] Dialogue hien co them option "Magnet Event" (Magnet Gacha 500
--- token, DUNG CHUNG cooldown 2h voi roll Beli). Tuyen doi khong duoc bam nham
--- nut do. Bo fallback mu "button thu 2" (vi tri option da doi sau update),
--- thay bang cham diem text + thu lan luot tung nut an toan.
--- Tra ve true neu da bam duoc nut.
-local RF_DLG_CYCLE = 0
-local function RF_IsMagnetButtonText(low)
-	return low:find("magnet") or low:find("token") or low:find("event")
-end
-local function RF_IsLeaveButtonText(low)
-	return low:find("leave") or low:find("nevermind") or low:find("never mind")
-		or low:find("cancel") or low:find("close") or low:find("exit")
-		or low:find("goodbye") or low:find("good bye")
-end
-local function RF_ClickDialogueGachaOption(mode)
-	local dlg = RF_FindDialogueFrame()
-	if not dlg then
-		return false
-	end
-	local buttons = {}
-	for _, obj in ipairs(dlg:GetDescendants()) do
-		if obj:IsA("GuiButton") then
-			table.insert(buttons, obj)
-		end
-	end
-	if #buttons == 0 then
-		return false
-	end
-	-- Uu tien button ten "button" (dung cau truc dialogue cua game).
-	local named = {}
-	for _, btn in ipairs(buttons) do
-		if btn.Name == "button" then
-			table.insert(named, btn)
-		end
-	end
-	local list = #named > 0 and named or buttons
-	pcall(function()
-		table.sort(list, function(a, b)
-			return a.AbsolutePosition.Y < b.AbsolutePosition.Y
-		end)
-	end)
-	-- 1) Chon theo diem text: "random" la manh nhat; loai nut magnet/leave.
-	local target, bestScore = nil, 0
-	for _, btn in ipairs(list) do
-		local low = RF_CollectButtonText(btn)
-		if not RF_IsMagnetButtonText(low) and not RF_IsLeaveButtonText(low) then
-			local score = 0
-			if low:find("random") then
-				score = 4
-			elseif low:find("gacha") then
-				score = 3
-			elseif low:find("beli") or low:find("spin") or low:find("roll") then
-				score = 2
-			elseif low:find("fruit") then
-				score = 1
-			end
-			if score > bestScore then
-				target, bestScore = btn, score
-			end
-		end
-	end
-	if target then
-		RF_DLG_CYCLE = 0
-		return RF_ClickButton(target, mode)
-	end
-	-- 2) Khong khop text (game ngon ngu khac): thu LAN LUOT tung nut an toan
-	-- (bo qua nut magnet/leave), moi lan goi thu nut tiep theo de khong ket
-	-- mai o mot nut sai nhu fallback "button thu 2" cu.
-	local safe = {}
-	for _, btn in ipairs(list) do
-		local low = RF_CollectButtonText(btn)
-		if not RF_IsMagnetButtonText(low) and not RF_IsLeaveButtonText(low) then
-			table.insert(safe, btn)
-		end
-	end
-	if #safe == 0 then
-		return false
-	end
-	RF_DLG_CYCLE = (RF_DLG_CYCLE % #safe) + 1
-	return RF_ClickButton(safe[RF_DLG_CYCLE], mode)
-end
-
-local function RF_FindPurchaseButton()
-	local pg = t.PlayerGui
-	if not pg then
-		return nil
-	end
-	-- [FIX U30] Them ten cua so du phong (game co the doi ten UI sau rework).
-	local winNames = { "ZiolesGacha_Window", "ZiolesGacha", "Gacha_Window", "GachaWindow", "FruitGacha" }
-	local win = nil
-	for _, wn in ipairs(winNames) do
-		win = pg:FindFirstChild(wn)
-		if win then
-			break
-		end
-	end
-	if not win then
-		for _, gui in ipairs(pg:GetChildren()) do
-			if gui:IsA("ScreenGui") then
-				for _, wn in ipairs(winNames) do
-					win = gui:FindFirstChild(wn, true)
-					if win then
-						break
-					end
-				end
-				-- Du phong cuoi: frame hien thi co "gacha" trong ten.
-				if not win and string.find(string.lower(gui.Name), "gacha", 1, true) then
-					win = gui
-				end
-				if win then
-					break
-				end
-			end
-		end
-	end
-	if not win then
-		return nil
-	end
-	-- Cua so ton tai nhung dang an/disabled thi bo qua
-	if not RF_IsGuiVisible(win) then
-		return nil
-	end
-	-- [FIX U30] Cua so gacha nay co 2 loai nut roll: Beli (roll thuong) va
-	-- Magnet Token (event, dung chung cooldown). Chi lay nut BELI, loai nut token.
-	local best, bestScore = nil, 0
-	local function consider(btn)
-		if not btn or not btn:IsA("GuiButton") then
-			return
-		end
-		local low = string.lower(btn.Name) .. " " .. RF_CollectButtonText(btn)
-		if low:find("magnet") or low:find("token") then
-			return -- nut Magnet Gacha: khong bao gio bam
-		end
-		local score = 0
-		if btn.Name == "PurchaseButton" then
-			score = 3
-		end
-		if low:find("purchase") or low:find("buy") then
-			score = score + 2
-		end
-		if low:find("beli") or low:find("$") or low:find("%d") then
-			score = score + 2 -- nut roll Beli thuong hien gia tien
-		end
-		if low:find("spin") or low:find("roll") then
-			score = score + 1
-		end
-		if score > bestScore then
-			best, bestScore = btn, score
-		end
-	end
-	consider(win:FindFirstChild("PurchaseButton", true))
-	for _, obj in ipairs(win:GetDescendants()) do
-		if obj:IsA("GuiButton") then
-			consider(obj)
-		end
-	end
-	return best
-end
-
--- [FIX v4 - NGUYEN NHAN CHINH] Game co the tao san SpinnerWindow trong PlayerGui
--- ngay tu luc vao game (Enabled=false / Visible=false) va chi bat len khi quay.
--- Ham cu chi dung FindFirstChild (khong kiem tra hien thi) nen:
---   * vong lap chinh: luon nghi "spinner dang mo" -> chi goi RF_CloseSpinnerIfDone()
---     va KHONG BAO GIO goi RandomFruit() -> bat toggle len ma khong quay duoc gi;
---   * flow UI: nghi da quay thanh cong oan -> khoa 2h du chua mua lan nao.
--- Moi: mac dinh chi tra ve cua so spinner khi no that su dang hien thi.
-local function RF_FindSpinnerWindow(requireVisible)
-	local pg = t.PlayerGui
-	if not pg then
-		return nil
-	end
-	local needVisible = requireVisible ~= false
-	local function accept(w)
-		if not w then
-			return nil
-		end
-		if needVisible and not RF_IsGuiVisible(w) then
-			return nil
-		end
-		return w
-	end
-	local direct = accept(pg:FindFirstChild("SpinnerWindow"))
-	if direct then
-		return direct
-	end
-	for _, gui in ipairs(pg:GetChildren()) do
-		if gui:IsA("ScreenGui") then
-			local w = accept(gui:FindFirstChild("SpinnerWindow", true))
-			if w then
-				return w
-			end
-		end
-	end
-	return nil
-end
-
--- Co spinner that su dang mo (dung cho vong lap chinh)?
-RF_IsSpinnerOpen = function()
-	return RF_FindSpinnerWindow(true) ~= nil
-end
-
--- Tim nut dong cua spinner: uu tien duong dan cu (neu game chua doi), roi moi
--- tim chung chung. Nil-safe: khong con index thang duong dan nua.
-local function RF_FindSpinnerCloseButton(sw)
-	if not sw then
-		return nil
-	end
-	local above = sw:FindFirstChild("AboveSpinner")
-	local nav = above and above:FindFirstChild("Navigation")
-	local specific = nav and nav:FindFirstChild("CloseButton")
-	if specific and specific:IsA("GuiButton") then
-		return specific
-	end
-	local direct = sw:FindFirstChild("CloseButton", true)
-	if direct and direct:IsA("GuiButton") then
-		return direct
-	end
-	for _, obj in ipairs(sw:GetDescendants()) do
-		if obj:IsA("GuiButton") and string.find(string.lower(obj.Name), "close") then
-			return obj
-		end
-	end
-	return nil
-end
-
--- Dong cua so quay neu spinner da quay xong (CloseButton hien ra).
--- Tra ve true neu dong duoc. An toan: khong loi du game co doi cau truc UI.
-function RF_CloseSpinnerIfDone()
-	local sw = RF_FindSpinnerWindow(true)
-	if not sw then
-		return false
-	end
-	local closeBtn = RF_FindSpinnerCloseButton(sw)
-	-- [FIX v4] Dung RF_IsGuiVisible (tinh ca cha bi an) thay vi chi .Visible
-	if not closeBtn or not RF_IsGuiVisible(closeBtn) then
-		return false
-	end
-	pcall(function()
-		if Spinner and type(Spinner.Close) == "function" then
-			Spinner:Close()
-		end
-	end)
-	RF_ClickButton(closeBtn)
-	return true
-end
-
--- [FIX v4] Gom tat ca bang chung "da quay thanh cong" vao 1 ham de ca duong remote
--- lan duong UI dung chung. Khong con tinh rieng vao SpinnerWindow (game co the tao
--- san cua so do du dang an) hay vao gia tri tra ve cua remote.
--- Cac tham so "before" co the nil (khi do bo qua kenh tuong ung).
-local function RF_VerifyPurchase(fruitsBefore, invBefore, beliBefore, sinceTick)
-	if RF_SpinSeenSince(sinceTick) then
-		return true, "game ban RE/SpinGacha"
-	end
-	if type(fruitsBefore) == "number" and RF_CountFruitTools() > fruitsBefore then
-		return true, "co fruit moi tren nguoi/balo"
-	end
-	local invNow = RF_CountInventoryFruits()
-	if type(invBefore) == "number" and type(invNow) == "number" and invNow > invBefore then
-		return true, "fruit moi vao kho"
-	end
-	if type(beliBefore) == "number" and beliBefore > 0 then
-		local beliNow = select(2, RF_GetLevelBeli())
-		if (beliBefore - beliNow) >= RF_GachaPrice(RF_GACHA_STATE.Level) * 0.5 then
-			return true, "da tru beli"
-		end
-	end
-	return false, nil
-end
-
--- Flow UI day du: NPC -> dialogue -> PurchaseButton -> cho quay -> dong spinner.
--- Tra ve: ok, err, kind (kind = "rejected" neu da bam mua nhung khong quay duoc)
-local function RF_GachaUIFlowCore()
-	RF_HookSpinEvent()
-	-- [FIX U30] Tim object NPC; neu khong thay thi dung vi tri du phong tu
-	-- NPCList (van bay toi va kich prompt theo ban kinh duoc).
-	local target = RF_FindGachaNpc()
-	if not target then
-		target = RF_FindGachaPosInNPCList()
-	end
-	if not target then
-		-- [FIX v4] Du phong cuoi cung: toa do NPC gacha da biet theo tung sea
-		-- (Sea 1: Middle Town, Sea 2: Cafe, Sea 3: Mansion).
-		target = RF_GACHA_FALLBACK_POS[game.PlaceId]
-		if target then
-			RF_GachaLog("khong tim thay ten NPC gacha -> bay toi toa do gacha da biet cua sea nay", true)
-		end
-	end
-	if not target then
-		if tick() - (RF_GACHA_STATE.DebugNpcAt or 0) > 60 then
-			RF_GACHA_STATE.DebugNpcAt = tick()
-			local names = {}
-			pcall(function()
-				local folder = workspace:FindFirstChild("NPCs")
-				if folder then
-					for _, o in ipairs(folder:GetChildren()) do
-						table.insert(names, o.Name)
-						if #names >= 12 then
-							break
-						end
-					end
-				end
-			end)
-			RF_GachaLog(
-				"khong tim thay NPC gacha (da thu ten mo gacha/zioles/cousin + NPCList)"
-					.. (#names > 0 and (" | NPCs hien co: " .. table.concat(names, ", ")) or " | thu muc NPCs rong/khong co"),
-				true
-			)
-		end
-		return false, "khong tim thay NPC gacha (Zioles) trong workspace/NPCList", "uifail"
-	end
-	-- Dong spinner con ton dui truoc khi bat dau
-	RF_CloseSpinnerIfDone()
-	-- [FIX v4] Ghi nhan spinner (neu co) ngay tu dau flow: neu no da mo truoc khi
-	-- minh lam gi thi KHONG duoc tinh la thanh cong cua lan nay.
-	local spinnerAtStart = RF_FindSpinnerWindow(true) ~= nil
-	local flowStart = tick()
-	if not RF_GoClickNpc(target, true) then
-		return false, "khong the bay toi NPC gacha", "uifail"
-	end
-	-- Mo dialogue roi bam option "Random Fruit" LAP LAI cho toi khi thay
-	-- PurchaseButton (truoc chi bam 1 lan roi break -> bam nham nut la phai lui mai).
-	-- [FIX v4] Xoay vong phuong thuc click: getconnections -> click vat ly, vi co
-	-- executor co connection nhung goi khong co tac dung (va nguoc lai).
-	local deadline = tick() + 15
-	local attempt = 0
-	while tick() < deadline do
-		if RF_FindPurchaseButton() then
-			break
-		end
-		if not spinnerAtStart and RF_FindSpinnerWindow(true) then
-			break -- spinner vua mo: da quay, khong can bam them
-		end
-		attempt = attempt + 1
-		if not RF_ClickDialogueGachaOption(attempt % 2 == 0 and "physical" or nil) then
-			RF_GoClickNpc(target, false) -- khong quet lai toan workspace
-		end
-		task.wait(0.5)
-	end
-	-- Bam PurchaseButton trong ZiolesGacha_Window
-	local purchaseBtn = nil
-	deadline = tick() + 8
-	while tick() < deadline do
-		purchaseBtn = RF_FindPurchaseButton()
-		if purchaseBtn then
-			break
-		end
-		if not spinnerAtStart and RF_FindSpinnerWindow(true) then
-			break
-		end
-		task.wait(0.25)
-	end
-	if not purchaseBtn then
-		-- [FIX v4] Co the da quay ngay tu luc bam dialogue -> kiem tra bang chung
-		-- truoc khi bao loi thay vi lui ve retry nhu cu.
-		local okEarly, whyEarly = RF_VerifyPurchase(nil, nil, nil, flowStart)
-		if okEarly then
-			return true, nil, nil
-		end
-		if not spinnerAtStart and RF_FindSpinnerWindow(true) then
-			return true, nil, nil
-		end
-		return false, "khong mo duoc cua so gacha (khong thay PurchaseButton)", "uifail"
-	end
-	-- Canh bao truoc neu co ve khong du beli (van thu quay vi premium duoc giam gia)
-	local lvl, beli = RF_GetLevelBeli()
-	if beli > 0 and beli < RF_GachaPrice(lvl) then
-		RF_GachaLog(
-			"canh bao: beli "
-				.. tostring(beli)
-				.. " co the khong du de quay (gia ~"
-				.. tostring(RF_GachaPrice(lvl))
-				.. ")"
-		)
-	end
-	local fruitsBefore = RF_CountFruitTools()
-	local invBefore = RF_CountInventoryFruits()
-	local _, beliBefore = RF_GetLevelBeli()
-	RF_ClickButton(purchaseBtn)
-	local clickAt = tick()
-	-- [FIX v4] Cho BANG CHUNG (spinner hien that / game ban SpinGacha / fruit moi /
-	-- beli giam) thay vi chi cho "SpinnerWindow ton tai" nhu cu.
-	local spinDeadline = tick() + RF_GACHA_SPIN_WAIT
-	local sawSpinner, clickedAgain = false, false
-	local nextVerify = 0
-	while tick() < spinDeadline do
-		if RF_FindSpinnerWindow(true) then
-			sawSpinner = true
-			if RF_CloseSpinnerIfDone() then
-				return true, nil, nil
-			end
-		elseif not clickedAgain and tick() - clickAt > 5 then
-			-- 5s khong thay spinner: thu bam lai bang click vat ly (getconnections
-			-- co the khong an duong o executor nay).
-			clickedAgain = true
-			RF_ClickButton(purchaseBtn, "physical")
-		end
-		if tick() >= nextVerify then
-			nextVerify = tick() + 1
-			local okV, why = RF_VerifyPurchase(fruitsBefore, invBefore, beliBefore, clickAt)
-			if okV then
-				RF_GachaLog("xac nhan da quay (" .. tostring(why) .. ")")
-				RF_CloseSpinnerIfDone()
-				return true, nil, nil
-			end
-		end
-		task.wait(0.25)
-	end
-	if sawSpinner then
-		-- Spinner co mo nhung chua dong duoc trong thoi gian cho -> van da quay
-		-- thanh cong; vong lap chinh se thu dong tiep.
-		return true, nil, nil
-	end
-	-- Da bam mua nhung khong co bang chung: thuong la server tu choi
-	-- (cooldown 2h / thieu beli).
-	return false, "da bam PurchaseButton nhung khong quay duoc (cooldown 2h hoac thieu beli?)", "rejected"
-end
-
--- Wrapper dat co __RFGachaMoving trong suot UI flow (flow nay dieu khien nhan
--- vat bay toi NPC). FarmMethod/FarmSelectMob/AutoKillBoss thay co nay se tam
--- dung de khong giang co tween. pcall dam bao co luon duoc ha ke ca khi loi.
-local function RF_GachaUIFlow()
-	getgenv().__RFGachaMoving = true
-	getgenv().__RFGachaMovingAt = tick()
-	local ok, r1, r2, r3 = pcall(RF_GachaUIFlowCore)
-	getgenv().__RFGachaMoving = false
-	if not ok then
-		return false, "loi UI flow: " .. tostring(r1), "uifail"
-	end
-	return r1, r2, r3
+	RF_GACHA_STATE.Backoff = E
+	RF_GACHA_STATE.NextTry = tick() + E
+	RF_GachaLog("that bai (" .. tostring(b) .. ") - cho " .. tostring(E) .. "s roi thu lai")
 end
 
 local function RF_GachaTryPurchase()
-	local lvl, beli = RF_GetLevelBeli()
-	RF_GACHA_STATE.Level = lvl
-	-- [FIX U30] Kiem tra beli truoc: khong du tien thi cho 60s thay vi bay toi
-	-- NPC vo ich (premium/plus duoc giam 20% nen nguong la 80% gia chuan).
-	local price = RF_GachaPrice(lvl)
-	if beli > 0 and beli < price * 0.8 then
-		local msg = "khong du beli (co " .. tostring(beli) .. ", can ~" .. tostring(math.floor(price * 0.8)) .. ")"
-		RF_GACHA_STATE.LastReason = msg
-		RF_GACHA_STATE.NextTry = tick() + 60
-		RF_GachaLog(msg .. " - cho 60s roi thu lai")
-		return false, msg
+	local E = tick()
+	local l, y = pcall(function()
+		return t.Data.Level.Value
+	end)
+	local P = (l and tonumber(y)) or 0
+	if P < RF_GACHA_MIN_LEVEL then
+		RF_GACHA_STATE.NextTry = E + RF_GACHA_BACKOFF_LEVEL
+		RF_GachaLog("chua dat Lv" .. RF_GACHA_MIN_LEVEL .. " (hien tai: " .. tostring(P) .. ") - cho " .. RF_GACHA_BACKOFF_LEVEL .. "s")
+		return false
 	end
-	-- 1) Duong remote CommF_ "Cousin" (nhanh, khong di chuyen nhan vat)
-	local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-	local commF = remotes and remotes:FindFirstChild("CommF_")
-	if commF then
-		local variants = {
-			{ "Cousin", "Buy" },
-			{ "Cousin", "DLCBoxData" },
-		}
-		local bannerBox = RF_GachaGetBannerBox()
-		if bannerBox and bannerBox ~= "DLCBoxData" then
-			table.insert(variants, { "Cousin", bannerBox })
+	local R, m = RF_GachaGetRemote()
+	if not R then
+		RF_GachaApplyBackoff(tostring(m))
+		return false
+	end
+	for K, x in ipairs(RF_GachaGetBoxList()) do
+		RF_GACHA_STATE.Attempts = RF_GACHA_STATE.Attempts + 1
+		local C, T = RF_GachaPurchase(R, x.Name)
+		if C then
+			RF_GACHA_STATE.Success = RF_GACHA_STATE.Success + 1
+			RF_GACHA_STATE.Backoff = 0
+			RF_GACHA_STATE.NextTry = 0
+			RF_GACHA_STATE.LastReason = nil
+			RF_GachaLog("mua thanh cong box " .. tostring(x.Name) .. " [" .. tostring(x.Source) .. "] - tong " .. RF_GACHA_STATE.Success .. " lan")
+			return true
 		end
-		for _, args in ipairs(variants) do
-			RF_GACHA_STATE.Attempts = RF_GACHA_STATE.Attempts + 1
-			local ok, info, affected, cdHint, kind = RF_GachaInvokeCousin(args)
-			if ok then
-				RF_GachaOnSuccess("remote CommF_ " .. table.concat(args, "/") .. " [" .. tostring(info) .. "]")
-				return true
-			end
-			RF_GACHA_STATE.LastReason = info
-			RF_GachaLog(table.concat(args, "/") .. " that bai: " .. tostring(info))
-			if kind == "unverified" then
-				-- [FIX v4] Server noi OK nhung khong co bang chung: khong thu tiep cach
-				-- goi khac (tranh mua 2 lan) nhung VAN chay flow UI de thay trang thai
-				-- that cua game (spinner/cooldown/sever tu choi).
-				RF_GachaLog("remote bao OK nhung khong co bang chung -> thu flow UI")
-				break
-			end
-			if cdHint and cdHint > 0 then
-				-- [FIX U30] Server bao con cooldown -> cho dung thoi gian do
-				-- (toi da 2h), khong chay flow UI (UI cung se bi tu choi).
-				local waitS = math.min(cdHint, RF_GACHA_COOLDOWN)
-				RF_GACHA_STATE.NextTry = tick() + waitS
-				RF_GACHA_STATE.Backoff = RF_GACHA_BACKOFF_MAX
-				RF_GachaLog("con cooldown gacha - cho " .. tostring(waitS) .. "s roi thu lai")
-				return false, info
-			end
-			if affected then
-				-- Da co tac dung gi do nhung khong xac nhan duoc thanh cong ->
-				-- khong thu tiep cac cach goi khac (de khong bi mua 2 lan).
-				RF_GachaApplyBackoff("khong xac nhan duoc ket qua mua")
-				return false, "khong xac nhan duoc ket qua mua"
-			end
-		end
-	else
-		RF_GACHA_STATE.LastReason = "khong tim thay Remotes.CommF_"
-		RF_GachaLog("khong tim thay Remotes.CommF_ -> chay flow UI gacha")
+		RF_GACHA_STATE.LastReason = T
+		RF_GachaLog("box " .. tostring(x.Name) .. " [" .. tostring(x.Source) .. "] that bai: " .. tostring(T))
 	end
-	-- 2) Fallback: chay dung UI gacha cua game
-	if commF then
-		RF_GachaLog("remote CommF_ khong mua duoc -> chay flow UI gacha")
-	end
-	local uiOk, uiErr, uiKind = RF_GachaUIFlow()
-	if uiOk then
-		RF_GachaOnSuccess("flow UI")
-		return true
-	end
-	RF_GACHA_STATE.LastReason = uiErr
-	if uiKind == "rejected" then
-		-- cooldown/thieu beli: cho lau de khong bay di bay lai lien tuc
-		-- [FIX v4] Giam tu 600s xuong 180s: van tranh spam nhung khong bi "chet" 10
-		-- phut oan neu that ra lan sau co the quay duoc (vd: vua du beli them).
-		RF_GACHA_STATE.NextTry = tick() + 180
-		RF_GACHA_STATE.Backoff = RF_GACHA_BACKOFF_MAX
-		RF_GachaLog(tostring(uiErr) .. " - cho 10 phut roi thu lai")
-	else
-		RF_GachaApplyBackoff(tostring(uiErr))
-	end
-	return false, uiErr
+	RF_GachaApplyBackoff("khong box nao mua duoc")
+	return false
 end
 
 function RandomFruit()
 	if RF_GACHA_STATE.NextTry > tick() then
-		return false -- dang trong thoi gian backoff/cooldown, bo qua lan nay
+		return false -- dang trong thoi gian backoff, bo qua lan nay
 	end
-	if RF_GACHA_STATE.Busy then
-		-- [FIX v4] Chong ket co Busy: neu luong truoc bi huy/ket giua chung (doi
-		-- character, rejoin, loi khong mong muon) thi co nay se khoa tinh nang mai
-		-- mai. Sau RF_GACHA_BUSY_TIMEOUT giay thi reset de chay lai.
-		if tick() - (RF_GACHA_STATE.BusyAt or 0) < RF_GACHA_BUSY_TIMEOUT then
-			return false -- flow truoc do chua xong, khong spawn trung
-		end
-		RF_GachaLog("flow truoc bi ket hon " .. tostring(RF_GACHA_BUSY_TIMEOUT) .. "s - reset de chay lai", true)
-	end
-	RF_HookSpinEvent()
-	local level = RF_GetLevelBeli()
-	if level < RF_GACHA_MIN_LEVEL then
-		RF_GACHA_STATE.NextTry = tick() + RF_GACHA_BACKOFF_LEVEL
-		RF_GachaLog(
-			"chua dat Lv" .. RF_GACHA_MIN_LEVEL .. " (hien tai: " .. tostring(level) .. ") - cho " .. RF_GACHA_BACKOFF_LEVEL .. "s"
-		)
+	local E, l = pcall(RF_GachaTryPurchase)
+	if not E then
+		RF_GachaApplyBackoff("loi khong mong muon: " .. tostring(l))
 		return false
 	end
-	RF_GACHA_STATE.Busy = true
-	RF_GACHA_STATE.BusyAt = tick()
-	-- Khoa tam de khong spawn trung flow; cac nhanh that bai ben trong se dat
-	-- lai NextTry cho phu hop.
-	RF_GACHA_STATE.NextTry = tick() + 20
-	task.spawn(function()
-		local ok, result, err = pcall(RF_GachaTryPurchase)
-		RF_GACHA_STATE.Busy = false
-		if not ok then
-			RF_GachaApplyBackoff("loi khong mong muon: " .. tostring(result))
-			return
-		end
-		if result == true then
-			return -- thanh cong: NextTry da duoc dat trong RF_GachaOnSuccess
-		end
-		if type(err) == "string" and err ~= "" then
-			RF_GACHA_STATE.LastReason = err
-		end
-		-- Cac nhanh that bai da tu dat backoff/NextTry; neu chua thi dat o day.
-		if RF_GACHA_STATE.NextTry <= tick() then
-			RF_GachaApplyBackoff(tostring(RF_GACHA_STATE.LastReason or "khong ro nguyen nhan"))
-		end
-	end)
-	return true
+	return l
 end
-end -- helper gacha; RandomFruit va RF_CloseSpinnerIfDone giu closure cua block nay
 function DetectCountDF()
 	local b = getbackpack()
 	if #b < 1 then
@@ -22233,15 +20803,8 @@ loadstring(
 )()
 x = game:GetService("RunService")
 runAsync = require(game.ReplicatedStorage.Util.runAsync)
--- [FIX RANDOM FRUIT v2] require an toan: truoc day require thang 2 module nay o top-level
--- -> neu game doi/bo module thi loi "attempt to call a nil value" lam CA SCRIPT chet
--- truoc khi vao vong lap chinh (toggle Random Devil Fruit va moi tinh nang khac deu khong lam gi).
-pcall(function()
-	Spinner = require(game:GetService("ReplicatedStorage").Controllers.UI.Spinner)
-end)
-pcall(function()
-	SharedGachaUtil = require(game.ReplicatedStorage.Modules.Gacha.SharedGachaUtil)
-end)
+Spinner = require(game:GetService("ReplicatedStorage").Controllers.UI.Spinner)
+SharedGachaUtil = require(game.ReplicatedStorage.Modules.Gacha.SharedGachaUtil)
 TextUtil = require(game.ReplicatedStorage.Modules.Util.TextUtil)
 if not getgenv().BananaCatMainLoop then
 	getgenv().BananaCatMainLoop = true
@@ -22299,24 +20862,16 @@ if not getgenv().BananaCatMainLoop then
 			lastFruitTick = tick()
 			local T, T = pcall(function()
 				if Settings["Random Devil Fruit"] then
-					-- [FIX] Cu: index thang SpinnerWindow.AboveSpinner.Navigation.CloseButton.Visible
-					-- -> game doi cau truc UI la loi giua chung, bi pcall nuot -> cua so quay
-					-- mo mai mai va tinh nang chet. Moi: kiem tra nil-safe qua
-					-- RF_CloseSpinnerIfDone(); chi quay tiep khi khong con spinner nao mo.
-					-- [FIX U30] Dung RF_FindSpinnerWindow() (quet sau trong moi
-					-- ScreenGui) thay vi FindFirstChild nong - tranh quay chong khi
-					-- spinner nam sau trong UI sau rework.
-					local RF_spinnerOpen = false
-					pcall(function()
-						-- [FIX v4] PHAI kiem tra hien thi (RF_IsSpinnerOpen): game co the
-						-- tao san SpinnerWindow dang an trong PlayerGui -> ham cu tra ve
-						-- "dang mo" moi luc -> RandomFruit() khong bao gio duoc goi.
-						RF_spinnerOpen = RF_IsSpinnerOpen()
-					end)
-					if RF_spinnerOpen then
-						RF_CloseSpinnerIfDone()
-					else
+					if
+						not game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("SpinnerWindow")
+						or not game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("SpinnerWindow").Enabled
+					then
 						RandomFruit()
+					elseif
+						game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("SpinnerWindow").Enabled
+						and game:GetService("Players").LocalPlayer.PlayerGui.SpinnerWindow.AboveSpinner.Navigation.CloseButton.Visible
+					then
+						Spinner:Close()
 					end
 				end
 				if Settings["Auto Trade Bone"] then
@@ -22357,5 +20912,4 @@ if not getgenv().BananaCatMainLoop then
 		end
 	end)
 end
-getgenv().__BF_RESULT = Main
 getgenv().__BF_LOADED = true
