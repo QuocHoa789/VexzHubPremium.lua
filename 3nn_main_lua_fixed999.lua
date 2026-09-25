@@ -4316,19 +4316,34 @@ function DetectPartMobBring(Q, d, I, _)
 		end
 	end
 end
-function isnetworkowner2(Q)
-	local d, I, _ = next, game.Workspace.Characters:GetChildren()
-	for o, o in d, I, _ do
-		if
-			o.Name ~= t.Name
-			and (o:FindFirstChild("HumanoidRootPart"))
-			and (o.HumanoidRootPart.Position - Q.Position).Magnitude <= 300
-		then
-			return false
+-- Best-effort ownership check for executors that do not expose
+-- `isnetworkowner`. Roblox normally gives the local client ownership when
+-- there is no other player close enough to compete for the mob's physics.
+function isnetworkowner2(root)
+	if not root or not root.Parent then
+		return false
+	end
+
+	local ok, players = pcall(function()
+		return game:GetService("Players"):GetPlayers()
+	end)
+	if not ok then
+		-- Keep the fallback usable if an executor wraps the Players API.
+		return true
+	end
+
+	for _, player in ipairs(players) do
+		if player ~= t then
+			local character = player.Character
+			local otherRoot = character and character:FindFirstChild("HumanoidRootPart")
+			if otherRoot and (otherRoot.Position - root.Position).Magnitude <= 300 then
+				return false
+			end
 		end
 	end
 	return true
 end
+
 -- Only move mobs whose physics the client actually owns. A local CFrame change
 -- on a server-owned mob produces a visual "ghost" that cannot be hit.
 local function CanBringMob(mob)
@@ -4338,10 +4353,14 @@ local function CanBringMob(mob)
 	local root = mob.HumanoidRootPart
 	if type(isnetworkowner) == "function" then
 		local ok, owned = pcall(isnetworkowner, root)
-		return ok and owned == true
+		if ok and type(owned) == "boolean" then
+			return owned
+		end
 	end
-	-- Without an ownership API, proximity is not proof of ownership.
-	return false
+	-- Some executors do not implement isnetworkowner, while others expose a
+	-- stub that errors or returns nil. Fall back to the nearby-player heuristic
+	-- in all of those cases instead of disabling Bring Mob entirely.
+	return isnetworkowner2(root)
 end
 
 local lastBring = setmetatable({}, { __mode = "k" })
