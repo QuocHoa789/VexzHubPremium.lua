@@ -1,5 +1,15 @@
-if getgenv().__BF_LOADED then
-	return getgenv().__BF_RESULT
+-- Neu launcher khong co getgenv() thi bao loi ro rang thay vi crash nil o line 1.
+do
+	if type(getgenv) ~= "function" then
+		error("[Banana Cat Hub] Executor khong ho tro getgenv(); can moi truong Luau tuong thich.", 0)
+	end
+	local ok, env = pcall(getgenv)
+	if not ok or type(env) ~= "table" then
+		error("[Banana Cat Hub] getgenv() khong tra ve bang hop le; kiem tra executor.", 0)
+	end
+	if env.__BF_LOADED then
+		return env.__BF_RESULT
+	end
 end
 
 -- [FIX] LPH_ATTRIBUTES / VM / NONE la macro Luraph, khong co khi chay script thuong
@@ -143,10 +153,11 @@ repeat
 	wait()
 until game:FindFirstChild("CoreGui")
 getgenv().ExploitReq = syn and syn.request
-	or identifyexecutor() == "Fluxus" and request
+	or type(identifyexecutor) == "function" and identifyexecutor() == "Fluxus" and request
 	or http_request
-	or http.request
+	or type(http) == "table" and http.request
 	or requests
+	or request
 if getgenv().LoadScript then
 	return print("Double UI")
 end
@@ -10612,6 +10623,10 @@ MultiRaidsSection.CreateToggle(
 --     fallback button thu 2 theo thu tu) va LAP LAI cho toi khi thay PurchaseButton.
 --   - Quay xong cho dung 2 gio (gioi han cua game); that bai -> backoff 5..60s.
 --   - Moi buoc nil-safe + pcall; log co throttle (1 lan/30s) de khong full console.
+-- Gioi han scope cac helper gacha: Luau chi cho phep 200 local registers trong mot chunk.
+-- Callback o cuoi file van can kiem tra spinner nen giu lai duy nhat ham nay.
+local RF_IsSpinnerOpen
+do
 local RF_GACHA_MIN_LEVEL = 50
 local RF_GACHA_COOLDOWN = 7200 -- game gioi han 1 lan quay / 2 gio
 local RF_GACHA_BACKOFF_MIN = 5 -- cho cho lan that bai dau tien (giay)
@@ -11568,7 +11583,7 @@ local function RF_FindSpinnerWindow(requireVisible)
 end
 
 -- Co spinner that su dang mo (dung cho vong lap chinh)?
-local function RF_IsSpinnerOpen()
+RF_IsSpinnerOpen = function()
 	return RF_FindSpinnerWindow(true) ~= nil
 end
 
@@ -11934,6 +11949,7 @@ function RandomFruit()
 	end)
 	return true
 end
+end -- helper gacha; RandomFruit va RF_CloseSpinnerIfDone giu closure cua block nay
 function DetectCountDF()
 	local b = getbackpack()
 	if #b < 1 then
@@ -22341,4 +22357,5 @@ if not getgenv().BananaCatMainLoop then
 		end
 	end)
 end
+getgenv().__BF_RESULT = Main
 getgenv().__BF_LOADED = true
