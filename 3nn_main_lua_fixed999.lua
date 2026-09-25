@@ -1804,6 +1804,96 @@ function StatusCheckLeviathan()
 	end
 	return "..."
 end
+-- ============================================================
+-- [FIX GHOST MOB] Registry mob "ghost" -- dung chung cho ca script
+-- ------------------------------------------------------------
+-- "Ghost mob" = model trong workspace.Enemies ma CLIENT nhin thay o ngay canh
+-- nguoi choi nhung SERVER van giu no o vi tri cu. Hau qua: moi cu danh
+-- (RegisterAttack / RegisterHit) gui len deu bi server bo qua vi rig that nam
+-- ngoai tam, mau khong bao gio tut -> dung nhu trieu chung nguoi dung bao cao:
+-- "bring mob ve ma toan bi ghost mob".
+-- Nguyen nhan goc: Bring Mob ghi CFrame len mob ma client KHONG co network
+-- ownership. Lenh ghi chi doi ban copy tren client; server (hoac nguoi choi
+-- dang own mob do) moi quyet dinh vi tri that.
+-- Registry nay dat TRUOC IsMobAlive() de IsMobAlive() tu dong loai ghost:
+-- DetectMob, DetectMobAura, CheckNameBoss va moi vong lap
+-- `repeat ... until not IsMobAlive(V)` se bo qua mob khong the danh, thay vi
+-- dung im danh mai mot con mob ao.
+-- ============================================================
+getgenv().GhostMobs = setmetatable({}, { __mode = "k" }) -- [mob] = tick() het han blacklist
+getgenv().GhostMobStrikes = setmetatable({}, { __mode = "k" }) -- [mob] = so lan server tu choi
+getgenv().GhostMobHits = setmetatable({}, { __mode = "k" }) -- [rig] = { n, first, last }
+getgenv().GhostMobTTL = 25 -- blacklist TAM THOI: sau 25s mob duoc thu keo lai (co the da doi owner)
+getgenv().VexGhostDebug = false -- bat len true de in log chan doan ra console
+
+getgenv().VexGhostLog = function(...)
+	if getgenv().VexGhostDebug then
+		print("[GhostMob]", ...)
+	end
+end
+
+getgenv().IsGhostMob = function(mob)
+	local expire = getgenv().GhostMobs[mob]
+	if expire == nil then
+		return false
+	end
+	if tick() >= expire then
+		getgenv().GhostMobs[mob] = nil
+		getgenv().GhostMobStrikes[mob] = nil
+		getgenv().GhostMobHits[mob] = nil
+		return false
+	end
+	return true
+end
+
+getgenv().MarkGhostMob = function(mob, reason)
+	if mob == nil then
+		return
+	end
+	getgenv().GhostMobs[mob] = tick() + (getgenv().GhostMobTTL or 25)
+	getgenv().GhostMobHits[mob] = nil
+	getgenv().VexGhostLog("blacklist", tostring(mob.Name), reason)
+end
+
+getgenv().UnmarkGhostMob = function(mob)
+	if mob == nil then
+		return
+	end
+	getgenv().GhostMobs[mob] = nil
+	getgenv().GhostMobStrikes[mob] = nil
+end
+
+-- [FIX GHOST MOB] Ghi lai nhung rig THUC SU duoc gui len server trong mot cu
+-- danh (goi tu AttackFunction / attackMelee). Day la bang chung khach quan de
+-- phat hien ghost: da gui >= 3 hit ma mau mob khong doi => server khong cong
+-- nhan mob nay (danh mai cung vo ich).
+getgenv().NoteAttackHits = function(hits)
+	if type(hits) ~= "table" then
+		return
+	end
+	local registry = getgenv().GhostMobHits
+	if registry == nil then
+		return
+	end
+	local now = tick()
+	for _, entry in ipairs(hits) do
+		local rig = entry[1]
+		if rig ~= nil then
+			local rec = registry[rig]
+			if rec == nil then
+				local humanoid = rig:FindFirstChildWhichIsA("Humanoid")
+				rec = { n = 0, first = now, last = now, health = humanoid and humanoid.Health or 0 }
+				registry[rig] = rec
+			end
+			rec.n += 1
+			rec.last = now
+		end
+	end
+end
+
+-- Tham chieu truc tiep (1 local, tranh goi getgenv() trong ham nong nay:
+-- IsMobAlive bi goi hang nghin lan/giay trong cac vong lap farm & AttackAOE).
+local GhostMobRegistry = getgenv().GhostMobs
 function IsMobAlive(K)
 	if
 		K
@@ -1812,6 +1902,13 @@ function IsMobAlive(K)
 		and (K:FindFirstChildWhichIsA("Humanoid"))
 		and K.Humanoid.Health > 0
 	then
+		-- [FIX GHOST MOB] Mob da duoc xac nhan la ghost (danh khong vao) thi coi
+		-- nhu khong ton tai trong thoi gian blacklist, de DetectMob chon mob khac
+		-- va vong lap farm thoat khoi muc tieu ao. `next()` re nhanh khi khong co
+		-- ghost nao (trang thai binh thuong) nen ham nay gan nhu khong ton kem.
+		if next(GhostMobRegistry) ~= nil and getgenv().IsGhostMob(K) then
+			return false
+		end
 		return true
 	end
 end
@@ -3651,9 +3748,15 @@ local m = {
 }
 function AttackAOE(Q, d)
 	local I, _, o, V, N = {}, {}, getgenv().getBladeHits, t.Character, { t.Character.HumanoidRootPart }
+	-- [FIX GHOST MOB] Loc ghost mob ra khoi danh sach hit. Hit dau tien trong
+	-- danh sach duoc gui lam muc tieu chinh (`table.remove(m, 1)`), nen neu mot
+	-- con ghost chen vao dau thi cu danh bi "lan" sang mob ao: server bo qua va
+	-- mob that dung canh cung khong mat mau -> farm nhu dung im.
+	local ghostList = getgenv().GhostMobs
+	local hasGhost = ghostList ~= nil and next(ghostList) ~= nil
 	for y, P in o(V, N, Q or 80, d) do
 		y = G:GetRigOfHitPart(P)
-		if y and not _[y] and m[P.Name] and (G:IsVulnerable(y)) then
+		if y and not _[y] and m[P.Name] and (G:IsVulnerable(y)) and not (hasGhost and getgenv().IsGhostMob(y)) then
 			local m, Q = y:FindFirstChild("Summoner"), t.Character:FindFirstChild("Summoner")
 			if
 				y ~= t.Character
@@ -3707,6 +3810,7 @@ function attackMelee(m)
 			end
 			Q = _[G:GetPureWeaponName(m) .. "-basic" .. v_u_27]
 			E:FireServer(Q.Length / (Q:GetAttribute("SpeedMult") or 1))
+			getgenv().NoteAttackHits(d) -- [FIX GHOST MOB]
 			l:FireServer(table.remove(d, 1)[2], d)
 			Q:Play(0.100000001, 1, 1 * (Q:GetAttribute("SpeedMult") or 1))
 			v_u_28 = true
@@ -3730,6 +3834,7 @@ AttackFunction = function(G)
 		if not m then
 			return
 		end
+		getgenv().NoteAttackHits(m) -- [FIX GHOST MOB]
 		E:FireServer(0)
 		l:FireServer(table.remove(m, 1)[2], m)
 		table.clear(m)
@@ -3744,6 +3849,7 @@ getgenv().AttackFunctionnhungSuperTrial = function()
 	if not G then
 		return
 	end
+	getgenv().NoteAttackHits(G) -- [FIX GHOST MOB]
 	E:FireServer(0)
 	l:FireServer(table.remove(G, 1)[2], G)
 	table.clear(G)
@@ -3818,6 +3924,11 @@ if t.Character then
 end
 t.CharacterAdded:Connect(g)
 local function m(E)
+	-- [FIX GHOST MOB] Khong danh vao mob da bi phat hien la ghost: cu danh do
+	-- chac chan bi server bo qua, chi lam mat thoi gian cua vong lap farm.
+	if E ~= nil and getgenv().IsGhostMob(E) then
+		return false
+	end
 	return t.Character
 		and (t.Character:FindFirstChild("HumanoidRootPart"))
 		and E
@@ -4344,60 +4455,565 @@ function isnetworkowner2(root)
 	return true
 end
 
--- Decide whether a mob may be brought. A local CFrame change on a mob the
--- server still simulates produces a visual "ghost", so prefer mobs we can own
--- -- but the ownership check must never DISABLE the feature: every mob in
--- workspace.Enemies is spawned and simulated by the server, so a "false" answer
--- is the normal case and is precisely what Bring Mob exists to work around.
-local function CanBringMob(mob)
-	if not IsMobAlive(mob) or mob:FindFirstChild("Ignored") then
-		return false
-	end
-	local root = mob.HumanoidRootPart
-	if type(isnetworkowner) == "function" then
-		local ok, owned = pcall(isnetworkowner, root)
-		-- Only a definitive "we own it" is trusted. A "false" (or a stub that
-		-- errors / returns nil / returns a non-boolean) falls through to the
-		-- nearby-player heuristic instead of blocking the bring.
-		if ok and owned == true then
-			return true
-		end
-	end
-	return isnetworkowner2(root)
-end
+-- Khoi nay duoc boc trong `do ... end`: main chunk cua file da cham gioi han
+-- 200 local register cua Luau ("Out of local registers ... exceeded limit 200"),
+-- nen moi local cua module phai het scope o day thay vi ton tai den cuoi file.
+-- Cac ham dung chung voi phia duoi (BringMobNearst / BringMobRaid) duoc xuat
+-- qua getgenv().VexMoveBringMob.
+do
+-- ============================================================
+-- [FIX GHOST MOB] Bring Mob: keo mob THAT, khong keo "ghost"
+-- ------------------------------------------------------------
+-- Loi cu (nguyen nhan cua "bring mob ve ma toan ghost mob"):
+--   CanBringMob() chi tin ket qua `true` cua isnetworkowner(); moi ket qua
+--   `false` deu duoc cho qua va di thang vao phep keo mob. Voi mob do SERVER
+--   (hoac nguoi choi khac) mo phong, `HumanoidRootPart.CFrame = ...` chi doi
+--   ban copy tren client: man hinh thay mob da ve canh ta, con server van giu
+--   no o cho cu -> RegisterAttack/RegisterHit gui len bi tu choi, mau khong tut.
+--   Vong lap farm goi BringMob() moi frame nen ban copy client lien tuc thang
+--   replication => ghost ton tai "vinh vien" day quanh nguoi choi; vi DetectMob()
+--   chon mob gan nhat nen bot bam vao ghost danh mai khong chet.
+--
+-- Cach xu ly moi (4 lop):
+--   1. Phan loai ownership: "owned" (isnetworkowner xac nhan -> keo ngay) /
+--      "blocked" (mob Anchored hoac co nguoi choi khac dang canh tranh vat ly ->
+--      khong dung vao) / "probe" (chua ro -> keo THU trong tam gan).
+--   2. Probe = keo mot lan roi NGUNG ghi CFrame, doi PROBE_DELAY giay de server
+--      kip day trang thai that ve:
+--        * mob van dung cho ta dat -> keo that -> cache "confirmed" (cac frame
+--          sau keo thoai mai khong can probe lai), chuyen sang giai doan 2
+--        * mob bi keo lech ve vi tri cu -> ta khong own no: tra mob ve dung vi
+--          tri server (ghost bien mat ngay) va "cam keo" mob do mot thoi gian
+--          (tang dan). KHONG blacklist khoi targeting vi day van la mob that,
+--          bot hoan toan co the bay toi va danh binh thuong.
+--      Chot chan "ghost khong tut": khi probe giai doan 1 dang cho, MoveBringMob()
+--      tu choi ghi CFrame, khong de vong lap farm de len ghost nhu ban cu.
+--   3. Tu thich nghi theo executor/game:
+--        * probe that bai lien tiep -> tam ngung doan (khong lam day man hinh
+--          ghost), thoi gian ngung tang dan
+--        * probe thanh cong trong khi isnetworkowner() noi false => API cua
+--          executor khong dang tin -> bo qua ket qua false cua no, Bring Mob van
+--          chay binh thuong (giu nguyen muc dich cua fix truoc)
+--        * nhieu probe thanh cong lien tiep -> mo rong dan ban kinh keo (250->400)
+--   4. Lop cuoi (chong ghost ma phep thu vi tri bo lot): mob da keo ma sau DAMAGE_WINDOW giay danh
+--      lien tuc van khong sut mau nao => ghost => blacklist 25s de IsMobAlive /
+--      DetectMob / AttackAOE bo qua, vong lap farm thoat khoi muc tieu ao. Chi
+--      ket luan khi sat thuong dang chay o nhung mob khac (tranh blacklist oan
+--      boss dang trong giai doan mien sat thuong), va TU CHUA LANH ngay khi mob
+--      bat dau tut mau tro lai.
+-- ============================================================
+local GHOST_ENV = getgenv()
+
+-- Ban kinh keo THU cho mob chua ro ownership. Dat 250 (gan bang radius 200/350
+-- cua Bring Mob) de Bring Mob van keo duoc dan mob o xa khi nguoi choi farm 1
+-- minh (Roblox giao ownership NPC cho nguoi choi gan nhat, khong gioi han cung).
+-- An toan vi ghost gio chi ton tai <= PROBE_DELAY giay va bi gioi han so luong.
+local PROBE_RANGE = 250
+local PROBE_RANGE_MAX = 400 -- tran ban kinh khi da doan thanh cong nhieu lan
+local PROBE_DELAY = 0.45 -- thoi gian cho server xac nhan vi tri that cua mob
+local PROBE_REVERT_DIST = 60 -- lech qua nguong nay => server da keo mob ve
+local PROBE_REVERT_MIN = 15 -- san duoi: mob di chuyen binh thuong cung lech vai studs
+local PROBE_REVERT_RATIO = 0.5 -- va khong qua 50% quang duong ma ta vua keo
+local DONT_BRING_COOLDOWN = 8 -- mob keo khong duoc: cam keo lai it nhat 8s (tang dan)
+local DONT_BRING_COOLDOWN_MAX = 120
+local STRIKE_DECAY = 60 -- qua 60s khong that bai thi dem lai tu dau (mob co the da doi owner)
+-- So mob duoc keo THU cung luc. Dat bang gioi han stack toi da (Bring Mob Count
+-- 6 -> 5 mob phu) de ca dan ve stack trong mot luot; neu chung that su la ghost
+-- thi cung chi ton tai PROBE_DELAY giay va che do "ngung doan" se chan lai.
+local PROBE_MAX_PENDING = 5
+local PROBE_FAIL_STOP = 3 -- N probe that bai lien tiep -> tam ngung doan
+local PESSIMISTIC_COOLDOWN = 12 -- thoi gian ngung doan lan dau (tang dan x2)
+local PESSIMISTIC_COOLDOWN_MAX = 120
+local CONFIRM_TTL = 6 -- cache "keo duoc" de frame sau khong phai probe lai
+local HEALTH_PROBE_DELAY = 2.5 -- giay cho de kiem tra mob that su danh duoc
+local HEALTH_PROBE_HITS = 3 -- so hit da gui len server toi thieu de ket luan
 
 local lastBring = setmetatable({}, { __mode = "k" })
-local function MoveBringMob(mob, destination)
-	if not CanBringMob(mob) or tick() - (lastBring[mob] or 0) < 0.15 then
+local bringCooldown = setmetatable({}, { __mode = "k" })
+local confirmedOwned = setmetatable({}, { __mode = "k" })
+-- [mob] = tick() : nhung mob dang duoc DUNG LAM DIEM STACK (tham so Q/b cua
+-- BringMob, BringMobNearst, BringMobRaid). Cac mob nay khong bao gio duoc keo
+-- di noi khac: neu mot vong lap khac (vd raid + farm chay song song) lay no lam
+-- "mob phu", vi tri stack se cong don lech ngau nhien qua tung frame va ca dan
+-- mob troi dan len troi.
+local activeBringTargets = setmetatable({}, { __mode = "k" })
+local ACTIVE_TARGET_TTL = 0.5
+-- [mob] = { at, origin } : nhung mob TA DA TUNG keo (du da xac nhan hay chua).
+-- Dung cho lop kiem tra cuoi: mob da keo ma danh mai khong tut mau => ghost.
+local broughtMobs = setmetatable({}, { __mode = "k" })
+local BROUGHT_TRACK_TTL = 60 -- bo theo doi mob sau 60s khong con lien quan
+local DAMAGE_WINDOW = 4 -- giay danh lien tuc ma mau khong doi
+local DAMAGE_WINDOW_HITS = 5 -- so hit toi thieu da gui len server
+local DAMAGE_WINDOW_SLACK = 1.5 -- cu danh cuoi cung cach day toi da bao lau
+local bringProbes = {} -- [mob] = { dest, origin, health, at, stage, state }
+local pendingMoveChecks = 0 -- so probe giai doan 1 (dang cho server xac nhan)
+local probeFailStreak = 0
+local probeSuccessStreak = 0
+local pessimisticUntil = 0
+local pessimisticCycles = 0
+local probeWatcherRunning = false
+
+-- HumanoidRootPart cua nhung nguoi choi khac, cache 0.2s: MobOwnership() bi goi
+-- cho tung mob trong vong lap chay moi frame nen khong the GetPlayers() lien tuc.
+local otherPlayerRoots = {}
+-- Khoi tao -1 (khong phai 0): neu de 0 thi trong 0.2s dau tien sau khi script
+-- chay, GetOtherPlayerRoots() tra ve danh sach RONG -> MobOwnership() khong thay
+-- nguoi choi khac -> keo nham mob ma ho dang own => ghost ngay tu frame dau.
+local otherPlayerRootsAt = -1
+local function GetOtherPlayerRoots()
+	local now = tick()
+	if now - otherPlayerRootsAt < 0.2 then
+		return otherPlayerRoots
+	end
+	otherPlayerRootsAt = now
+	local list = {}
+	local ok, players = pcall(function()
+		return game:GetService("Players"):GetPlayers()
+	end)
+	if ok and players then
+		for _, player in ipairs(players) do
+			if player ~= t then
+				local character = player.Character
+				local root = character and character:FindFirstChild("HumanoidRootPart")
+				if root and root.Parent then
+					table.insert(list, root)
+				end
+			end
+		end
+	end
+	otherPlayerRoots = list
+	return list
+end
+
+-- Tra ve "owned" / "blocked" / "probe" (xem giai thich o dau khoi nay).
+local function MobOwnership(mob, playerRoot)
+	local root = mob and mob:FindFirstChild("HumanoidRootPart")
+	if not root or not root.Parent then
+		return "blocked"
+	end
+	-- Part Anchored luon do server mo phong: client ghi CFrame chac chan sinh ghost.
+	if root.Anchored then
+		return "blocked"
+	end
+	-- Roblox TU DONG giao network ownership cua NPC cho nguoi choi gan mob nhat.
+	-- Vi vay chi nen dung vao mob khi ta dang la nguoi gan no nhat (raid/dong
+	-- nguoi van keo duoc); con neu co nguoi khac gan hon ro rang thi ho moi la
+	-- nguoi own vat ly cua mob -> ta keo ve chac chan sinh ghost.
+	local selfRoot = playerRoot ~= nil and playerRoot.Parent and playerRoot or nil
+	if selfRoot then
+		local selfDist = (root.Position - selfRoot.Position).Magnitude
+		for _, otherRoot in ipairs(GetOtherPlayerRoots()) do
+			if otherRoot.Parent and (root.Position - otherRoot.Position).Magnitude + 15 < selfDist then
+				return "blocked"
+			end
+		end
+	else
+		-- Khong biet nhan vat dang o dau: lui ve heuristic cu.
+		for _, otherRoot in ipairs(GetOtherPlayerRoots()) do
+			if otherRoot.Parent and (otherRoot.Position - root.Position).Magnitude <= 300 then
+				return "blocked"
+			end
+		end
+	end
+	if type(isnetworkowner) == "function" and GHOST_ENV.VexOwnApiUnreliable ~= true then
+		local ok, owned = pcall(isnetworkowner, root)
+		if ok and owned == true then
+			return "owned"
+		end
+		-- false / loi / tra ve nil: nhieu executor tra false cho MOI mob trong
+		-- workspace.Enemies nen khong duoc dung ket qua nay de chan Bring Mob
+		-- (do chinh la loi cua ban truoc). Coi nhu "probe" de server tu phan xu.
+	end
+	return "probe"
+end
+
+-- Ban kinh keo thu hien tai: mo rong dan khi cac lan doan deu thanh cong.
+local function ProbeRangeLimit()
+	if probeFailStreak > 0 or probeSuccessStreak <= 0 then
+		return PROBE_RANGE
+	end
+	return math.min(PROBE_RANGE * (1.5 ^ math.min(probeSuccessStreak, 4)), PROBE_RANGE_MAX)
+end
+
+local VerifyBringProbes
+local IsDamageFlowing
+
+local function StartProbeWatcher()
+	if probeWatcherRunning then
 		return
 	end
-	lastBring[mob] = tick()
-	sizepart(mob)
-	mob.HumanoidRootPart.CFrame = destination
-	-- AssemblyLinearVelocity / AssemblyAngularVelocity may only be written by
-	-- the network owner. On a server-owned part Roblox raises "lacking
-	-- permission", and because every BringMob call site sits un-pcall'd inside a
-	-- `repeat ... until` farm loop, that error would abort the whole farm.
-	pcall(function()
-		mob.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
-		mob.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+	probeWatcherRunning = true
+	task.spawn(function()
+		while next(bringProbes) ~= nil do
+			task.wait(0.15)
+			local ok, err = pcall(VerifyBringProbes)
+			if not ok then
+				GHOST_ENV.VexGhostLog("verify error:", tostring(err))
+			end
+		end
+		probeWatcherRunning = false
 	end)
 end
 
-function BringMob(Q)
-	if Settings["Bring Mob"] == false or not CanBringMob(Q) then
+-- Goi dinh ky tu StartProbeWatcher; khong yield nen duoc sua bang pairs an toan.
+VerifyBringProbes = function()
+	local now = tick()
+	for mob, probe in pairs(bringProbes) do
+		local parented = mob ~= nil and mob.Parent ~= nil
+		local root = parented and mob:FindFirstChild("HumanoidRootPart")
+		local humanoid = parented and mob:FindFirstChildWhichIsA("Humanoid")
+		if not root or not humanoid or humanoid.Health <= 0 then
+			-- Mob chet / bi xoa giua chung: probe het y nghia, don sach.
+			if probe.stage == 1 then
+				pendingMoveChecks -= 1
+			end
+			bringProbes[mob] = nil
+		elseif probe.stage == 1 then
+			if now - probe.at >= PROBE_DELAY then
+				pendingMoveChecks -= 1
+				local revertDist = math.max(
+					PROBE_REVERT_MIN,
+					math.min(PROBE_REVERT_DIST, probe.moveDist * PROBE_REVERT_RATIO)
+				)
+				if (root.Position - probe.dest).Magnitude <= revertDist then
+					-- Server GIU dung vi tri ta dat => keo that, khong phai ghost.
+					confirmedOwned[mob] = now + CONFIRM_TTL
+					GHOST_ENV.GhostMobStrikes[mob] = nil
+					probeFailStreak = 0
+					probeSuccessStreak += 1
+					-- Keo duoc that => bo che do "ngung doan" (khu vuc nay own duoc)
+					pessimisticUntil = 0
+					pessimisticCycles = 0
+					if probe.state == "probe" and type(isnetworkowner) == "function" then
+						-- isnetworkowner() noi false nhung server van nhan vi tri moi
+						-- => API khong dang tin; tu day bo qua ket qua false cua no de
+						-- Bring Mob khong bi "teo" tren executor do.
+						GHOST_ENV.VexOwnApiUnreliable = true
+					end
+					-- Giai doan 2: xac nhan mob that su danh duoc (mau co tut).
+					probe.stage = 2
+					probe.at = now
+					probe.health = humanoid.Health
+				else
+					-- Server keo mob ve cho cu => ta khong own mob nay => GHOST.
+					bringProbes[mob] = nil
+					confirmedOwned[mob] = nil
+					probeSuccessStreak = 0
+					probeFailStreak += 1
+					-- Tra mob ve vi tri that cua server de khong con ghost "lo lung"
+					-- canh nguoi choi. Best-effort: moi call site cua BringMob nam
+					-- trong vong lap farm khong pcall nen loi o day se chet ca farm.
+					pcall(function()
+						root.CFrame = CFrame.new(probe.origin)
+					end)
+					local strikeRec = GHOST_ENV.GhostMobStrikes[mob]
+					if strikeRec == nil or now - (strikeRec.at or 0) > STRIKE_DECAY then
+						strikeRec = { n = 0, at = now }
+					end
+					strikeRec.n += 1
+					strikeRec.at = now
+					GHOST_ENV.GhostMobStrikes[mob] = strikeRec
+					local strikes = strikeRec.n
+					-- KHONG blacklist mob nay khoi targeting: day van la mob THAT nam
+					-- dung vi tri server, chi la ta khong keo no ve duoc (server/
+					-- nguoi choi khac dang own vat ly). Neu blacklist thi bot se bo
+					-- qua mot mob hoan toan farm duoc (chi can bay toi gan no).
+					-- Vi vay chi "cam keo" mot thoi gian (tang dan theo so lan that
+					-- bai) -- vi tri client da duoc tra ve nen ghost bien mat ngay.
+					bringCooldown[mob] = now
+						+ math.min(DONT_BRING_COOLDOWN * (2 ^ (strikes - 1)), DONT_BRING_COOLDOWN_MAX)
+					if probeFailStreak >= PROBE_FAIL_STOP then
+						pessimisticCycles += 1
+						local waitTime = math.min(
+							PESSIMISTIC_COOLDOWN * (2 ^ (pessimisticCycles - 1)),
+							PESSIMISTIC_COOLDOWN_MAX
+						)
+						pessimisticUntil = now + waitTime
+						probeFailStreak = 0
+						GHOST_ENV.VexGhostLog("tam ngung keo mob doan", waitTime, "giay")
+					end
+				end
+			end
+		elseif probe.stage == 2 and now - probe.at >= HEALTH_PROBE_DELAY then
+			bringProbes[mob] = nil
+			local rec = GHOST_ENV.GhostMobHits[mob]
+			local attackedRecently = rec ~= nil and rec.n >= HEALTH_PROBE_HITS and (now - (rec.last or 0)) <= 1.5
+			if attackedRecently and humanoid.Health >= probe.health - 0.01 and IsDamageFlowing(now) then
+				-- Da gui >= 3 cu danh len server ma mau khong he tut => mob ao:
+				-- client thay no o day con server thi khong. Blacklist de bot bo
+				-- no va bam vao mob that.
+				confirmedOwned[mob] = nil
+				pcall(function()
+					root.CFrame = CFrame.new(probe.origin)
+				end)
+				GHOST_ENV.MarkGhostMob(mob, "khong mat mau sau " .. rec.n .. " hit")
+			elseif humanoid.Health > probe.health + 1 and (root.Position - probe.dest).Magnitude > 100 then
+				-- Mob bi server "leash" ve spawn va hoi day mau: keo tiep chi sinh
+				-- giang co, nghi mot luc roi moi tinh lai.
+				confirmedOwned[mob] = nil
+				bringCooldown[mob] = now + 5
+			else
+				confirmedOwned[mob] = now + CONFIRM_TTL
+			end
+		end
+	end
+end
+
+-- Ghi nhan mob dang duoc dung lam diem stack (goi o dau moi ham BringMob*).
+local function NoteBringTarget(mob)
+	activeBringTargets[mob] = tick()
+end
+
+local function IsActiveBringTarget(mob)
+	local at = activeBringTargets[mob]
+	return at ~= nil and tick() - at < ACTIVE_TARGET_TTL
+end
+
+-- Mob nay dang duoc "giu" trong stack (dang probe hoac da xac nhan keo duoc)?
+-- Dung de BringMob dem dung so mob theo Settings["Bring Mob Count"]: neu khong
+-- tinh cac mob dang probe thi moi frame se keo them mob moi va stack phinh ra
+-- qua con so nguoi dung chon.
+local function IsBringCommitted(mob)
+	local probe = bringProbes[mob]
+	if probe ~= nil then
+		return true
+	end
+	local untilTime = confirmedOwned[mob]
+	return untilTime ~= nil and untilTime > tick()
+end
+
+-- Keo mot mob ve `destination`. Tra ve true khi lenh keo thuc su duoc gui di.
+local function MoveBringMob(mob, destination, playerRoot)
+	if mob == nil or destination == nil then
+		return false
+	end
+	if not IsMobAlive(mob) or mob:FindFirstChild("Ignored") or GHOST_ENV.IsGhostMob(mob) then
+		return false
+	end
+	if IsActiveBringTarget(mob) then
+		-- Mob nay la diem stack ma mot vong lap khac dang bam vao: keo no di se
+		-- lam lech ngau nhien cong don (ca dan mob troi dan len) va gay giang co.
+		return false
+	end
+	local now = tick()
+	local pending = bringProbes[mob]
+	if pending ~= nil and pending.stage == 1 then
+		-- Dang cho server xac nhan: TUYET DOI khong ghi CFrame tiep. Ghi de lien
+		-- tuc moi frame chinh la thu giu ghost ton tai (client luon thang
+		-- replication) va khong bao gio phat hien duoc mob ao.
+		return false
+	end
+	local cooldown = bringCooldown[mob]
+	if cooldown ~= nil and now < cooldown then
+		return false
+	end
+	if now - (lastBring[mob] or 0) < 0.15 then
+		return false
+	end
+	local root = mob:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	if playerRoot == nil then
+		local character = t.Character
+		playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+	end
+	if not playerRoot then
+		return false
+	end
+	local state = confirmedOwned[mob]
+	state = (state ~= nil and state > now) and "owned" or MobOwnership(mob, playerRoot)
+	if state == "blocked" then
+		return false
+	end
+	if state == "probe" then
+		if now < pessimisticUntil then
+			return false
+		end
+		if pendingMoveChecks >= PROBE_MAX_PENDING or probeFailStreak >= PROBE_FAIL_STOP then
+			return false
+		end
+		if (playerRoot.Position - root.Position).Magnitude > ProbeRangeLimit() then
+			-- Mob qua xa ma ta chua chac own duoc: keo ve gan nhu chac chan ra ghost.
+			return false
+		end
+	end
+	lastBring[mob] = now
+	sizepart(mob)
+	local origin = root.Position
+	broughtMobs[mob] = { at = now, origin = origin }
+	root.CFrame = destination
+	-- AssemblyLinearVelocity / AssemblyAngularVelocity chi network owner moi ghi
+	-- duoc. Tren mob server-owned Roblox bao "lacking permission", va moi call
+	-- site cua BringMob nam trong `repeat ... until` khong pcall => loi do se
+	-- lam chet ca vong lap farm.
+	pcall(function()
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+	end)
+	if state == "owned" then
+		-- Da duoc xac nhan (isnetworkowner noi true hoac probe truoc do thanh
+		-- cong): server chac chan nhan vi tri moi, khong can doan lai.
+		if pending ~= nil then
+			pending.dest = destination.Position
+		end
+		return true
+	end
+	if pending ~= nil then
+		-- Probe giai doan 2 dang chay: chi cap nhat dich de tiep tuc theo doi mau.
+		pending.dest = destination.Position
+		return true
+	end
+	local humanoid = mob:FindFirstChildWhichIsA("Humanoid")
+	bringProbes[mob] = {
+		dest = destination.Position,
+		origin = origin,
+		-- Quang duong thuc te ma lenh keo nay di chuyen mob. Nguong phat hien
+		-- "server keo ve" phai dat tuong xung voi no: mob cach stack 40 studs thi
+		-- lech 50 studs (ve dung cho cu) van nho hon nguong 60 tuyet doi -> ban cu
+		-- se tuong la keo thanh cong va de ghost song mai.
+		moveDist = (destination.Position - origin).Magnitude,
+		health = humanoid and humanoid.Health or 0,
+		at = now,
+		stage = 1,
+		state = state,
+	}
+	pendingMoveChecks += 1
+	StartProbeWatcher()
+	return true
+end
+
+-- [FIX GHOST MOB] Dau hieu "vu khi dang gay sat thuong": ghi nhan thoi diem gan
+-- nhat ma BAT KY mob nao trong workspace.Enemies bi tut mau. Chi duoc ket luan
+-- mot mob la ghost khi ta dang danh duoc nhung mob khac -- neu khong thi mot
+-- luc vu khi loi / bi stun / boss dang trong giai doan mien sat thuong se khien
+-- CA DAN mob bi blacklist oan va bot dung farm.
+local lastEnemyHealth = setmetatable({}, { __mode = "k" })
+local DAMAGE_FLOW_WINDOW = 10
+
+local function ScanEnemyDamage()
+	local enemies = workspace:FindFirstChild("Enemies")
+	if not enemies then
 		return
 	end
+	local now = tick()
+	for _, mob in ipairs(enemies:GetChildren()) do
+		local humanoid = mob:FindFirstChildWhichIsA("Humanoid")
+		if humanoid then
+			local prev = lastEnemyHealth[mob]
+			if prev ~= nil and humanoid.Health < prev - 0.01 then
+				GHOST_ENV.VexLastDamageAt = now
+			end
+			lastEnemyHealth[mob] = humanoid.Health
+		end
+	end
+end
+
+IsDamageFlowing = function(now)
+	local at = GHOST_ENV.VexLastDamageAt
+	return at ~= nil and now - at <= DAMAGE_FLOW_WINDOW
+end
+
+-- Lop kiem tra cuoi cung, chay nen 0.5s/lan: mot mob TA DA keo ma sau
+-- DAMAGE_WINDOW giay danh lien tuc (>= DAMAGE_WINDOW_HITS hit da gui len server)
+-- van khong sut mot mau nao thi do la ghost -- server khong he thay no o cho ma
+-- client dang thay. Can lop nay vi phep thu vi tri (stage 1) co the "mu" khi
+-- quang duong keo qua ngan, con phep thu mau ngay sau khi keo (stage 2) co the
+-- chay luc ta chua kip danh vao mob do.
+local function CheckBroughtMobDamage()
+	local now = tick()
+	for mob, info in pairs(broughtMobs) do
+		if now - info.at > BROUGHT_TRACK_TTL then
+			broughtMobs[mob] = nil
+		else
+			local humanoid = mob.Parent and mob:FindFirstChildWhichIsA("Humanoid")
+			local rec = GHOST_ENV.GhostMobHits[mob]
+			if humanoid == nil or humanoid.Health <= 0 then
+				broughtMobs[mob] = nil
+			elseif rec ~= nil then
+				if humanoid.Health < rec.health - 0.01 then
+					-- "Do thi khong phai ghost": mau co tut => mob that. Reset cua so
+					-- va BO BLACKLIST ngay lap tuc (truong hop mob vua het lua giai
+					-- mien sat thuong, hoac bot vua bay toi dung vi tri that cua no).
+					rec.health = humanoid.Health
+					rec.first = now
+					rec.n = 0
+					if GHOST_ENV.IsGhostMob(mob) then
+						GHOST_ENV.UnmarkGhostMob(mob)
+					end
+				elseif
+					rec.n >= DAMAGE_WINDOW_HITS
+					and now - rec.first >= DAMAGE_WINDOW
+					and now - rec.last <= DAMAGE_WINDOW_SLACK
+					and not GHOST_ENV.IsGhostMob(mob)
+					and IsDamageFlowing(now)
+				then
+					-- Da gui nhieu cu danh len server trong nhieu giay ma mau khong he
+					-- thay doi => client va server khong cung thay mot mob: GHOST.
+					local root = mob:FindFirstChild("HumanoidRootPart")
+					if root then
+						pcall(function()
+							root.CFrame = CFrame.new(info.origin)
+						end)
+					end
+					confirmedOwned[mob] = nil
+					GHOST_ENV.MarkGhostMob(mob, "keo ve roi nhung danh " .. rec.n .. " hit khong tut mau")
+					-- Van giu trong broughtMobs de vong quet nay tu chua lanh (unmark)
+					-- ngay khi mob bat dau tut mau; khong mark lai khi dang blacklist.
+				end
+			end
+		end
+	end
+end
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		if next(broughtMobs) ~= nil then
+			-- Quet sat thuong TRUOC de VexLastDamageAt luon tuoi khi ket luan ghost.
+			local ok, err = pcall(ScanEnemyDamage)
+			if not ok then
+				GHOST_ENV.VexGhostLog("damage scan error:", tostring(err))
+			end
+			ok, err = pcall(CheckBroughtMobDamage)
+			if not ok then
+				GHOST_ENV.VexGhostLog("damage check error:", tostring(err))
+			end
+		end
+	end
+end)
+
+-- Xuat ham keo mob de BringMobNearst / BringMobRaid (nam o phia duoi file, ngoai
+-- scope cua khoi `do` nay) dung chung mot duong dan kiem tra ghost/ownership.
+getgenv().VexMoveBringMob = MoveBringMob
+getgenv().VexNoteBringTarget = NoteBringTarget
+
+function BringMob(Q)
+	if Settings["Bring Mob"] == false then
+		return
+	end
+	-- [FIX GHOST MOB] Chi can Q la mob THAT (song, khong phai ghost). Ban cu gate
+	-- ca ham theo ownership cua Q: Q khong do ta own thi toan bo Bring Mob bi vo
+	-- hieu hoa, trong khi Q co bao gio bi di chuyen dau -- chi mob KHAC keo ve Q.
+	if not IsMobAlive(Q) or Q:FindFirstChild("Ignored") or GHOST_ENV.IsGhostMob(Q) then
+		return
+	end
+	local qRoot = Q:FindFirstChild("HumanoidRootPart")
 	local character = t.Character
 	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
-	if not playerRoot or (playerRoot.Position - Q.HumanoidRootPart.Position).Magnitude > 50 then
+	if not qRoot or not playerRoot then
 		return
 	end
-	-- Stack on the live target, not a spawn marker (which can be far away
-	-- or absent for event mobs). Never move the target away from the player.
-	local target = Q.HumanoidRootPart.CFrame
-	local radius = (Settings["Bring Mob Count"] or 2) > 2 and 350 or 200
-	local limit = math.clamp(Settings["Bring Mob Count"] or 2, 2, 6) - 1
+	if (playerRoot.Position - qRoot.Position).Magnitude > 50 then
+		return
+	end
+	-- Stack tren mob song, khong stack tren spawn marker (co the o xa hoac khong
+	-- ton tai voi mob event). Khong bao gio keo muc tieu ra xa nguoi choi.
+	NoteBringTarget(Q)
+	local target = qRoot.CFrame
+	local count = math.clamp(Settings["Bring Mob Count"] or 2, 2, 6)
+	local radius = count > 2 and 350 or 200
+	local limit = count - 1
 	local enemies = workspace:FindFirstChild("Enemies")
 	if not enemies then
 		return
@@ -4407,15 +5023,20 @@ function BringMob(Q)
 		if moved >= limit then
 			break
 		end
-		if mob ~= Q and mob.Name == Q.Name and CanBringMob(mob)
-			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= radius then
-			-- Small random spread so stacked mobs do not sit at the exact same
-			-- point and shove each other apart.
-			MoveBringMob(mob, target * CFrame.new(0, math.random(0, 2), math.random(0, 2)))
-			moved += 1
+		if mob ~= Q and mob.Name == Q.Name and IsMobAlive(mob) then
+			local mobRoot = mob:FindFirstChild("HumanoidRootPart")
+			if mobRoot and (mobRoot.Position - target.Position).Magnitude <= radius then
+				-- Lech ngau nhien nho de cac mob stack khong nam dung mot diem va
+				-- day nhau tung toe.
+				local didMove = MoveBringMob(mob, target * CFrame.new(0, math.random(0, 2), math.random(0, 2)), playerRoot)
+				if didMove or IsBringCommitted(mob) then
+					moved += 1
+				end
+			end
 		end
 	end
 end
+end -- do (module Bring Mob / ghost guard)
 task.wait(1)
 SettingFarmMain = Main.CreatePage({ Page_Name = "Setting Farm", Page_Title = "Setting Farm" })
 SettingFarmMainSection = SettingFarmMain.CreateSection("Setting Farm")
@@ -9946,36 +10567,61 @@ function DetectMobRaid()
 	end
 end
 function BringMobNearst(b)
-	if Settings["Bring Mob"] == false or not CanBringMob(b) then
+	if Settings["Bring Mob"] == false then
 		return
 	end
+	-- [FIX GHOST MOB] Nhu BringMob(): khong gate theo ownership cua muc tieu `b`
+	-- vi `b` khong bao gio bi di chuyen; chi cac mob khac bi keo ve canh `b`.
+	-- Viec loc ghost/ownership nam trong MoveBringMob() cho tung mob mot.
+	if not IsMobAlive(b) or b:FindFirstChild("Ignored") or getgenv().IsGhostMob(b) then
+		return
+	end
+	local bRoot = b:FindFirstChild("HumanoidRootPart")
 	local character = t.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root or (root.Position - b.HumanoidRootPart.Position).Magnitude > 50 then
+	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+	if not bRoot or not playerRoot or (playerRoot.Position - bRoot.Position).Magnitude > 50 then
 		return
 	end
-	local target = b.HumanoidRootPart.CFrame
-	for _, mob in ipairs(workspace.Enemies:GetChildren()) do
-		if mob ~= b and CanBringMob(mob)
-			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= 350 then
-			MoveBringMob(mob, target * CFrame.new(0, 0, 2))
+	local enemies = workspace:FindFirstChild("Enemies")
+	if not enemies then
+		return
+	end
+	getgenv().VexNoteBringTarget(b)
+	local target = bRoot.CFrame
+	for _, mob in ipairs(enemies:GetChildren()) do
+		if mob ~= b and IsMobAlive(mob) then
+			local mobRoot = mob:FindFirstChild("HumanoidRootPart")
+			if mobRoot and (mobRoot.Position - target.Position).Magnitude <= 350 then
+				getgenv().VexMoveBringMob(mob, target * CFrame.new(0, 0, 2), playerRoot)
+			end
 		end
 	end
 end
 function BringMobRaid(b)
-	if Settings["Bring Mob"] == false or not CanBringMob(b) then
+	if Settings["Bring Mob"] == false then
 		return
 	end
+	if not IsMobAlive(b) or b:FindFirstChild("Ignored") or getgenv().IsGhostMob(b) then
+		return
+	end
+	local bRoot = b:FindFirstChild("HumanoidRootPart")
 	local character = t.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root or (root.Position - b.HumanoidRootPart.Position).Magnitude > 50 then
+	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+	if not bRoot or not playerRoot or (playerRoot.Position - bRoot.Position).Magnitude > 50 then
 		return
 	end
-	local target = b.HumanoidRootPart.CFrame
-	for _, mob in ipairs(workspace.Enemies:GetChildren()) do
-		if mob ~= b and mob.Name == b.Name and CanBringMob(mob)
-			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= 200 then
-			MoveBringMob(mob, target * CFrame.new(0, 0, 2))
+	local enemies = workspace:FindFirstChild("Enemies")
+	if not enemies then
+		return
+	end
+	getgenv().VexNoteBringTarget(b)
+	local target = bRoot.CFrame
+	for _, mob in ipairs(enemies:GetChildren()) do
+		if mob ~= b and mob.Name == b.Name and IsMobAlive(mob) then
+			local mobRoot = mob:FindFirstChild("HumanoidRootPart")
+			if mobRoot and (mobRoot.Position - target.Position).Magnitude <= 200 then
+				getgenv().VexMoveBringMob(mob, target * CFrame.new(0, 0, 2), playerRoot)
+			end
 		end
 	end
 end
