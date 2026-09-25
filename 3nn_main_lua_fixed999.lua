@@ -4344,8 +4344,11 @@ function isnetworkowner2(root)
 	return true
 end
 
--- Only move mobs whose physics the client actually owns. A local CFrame change
--- on a server-owned mob produces a visual "ghost" that cannot be hit.
+-- Decide whether a mob may be brought. A local CFrame change on a mob the
+-- server still simulates produces a visual "ghost", so prefer mobs we can own
+-- -- but the ownership check must never DISABLE the feature: every mob in
+-- workspace.Enemies is spawned and simulated by the server, so a "false" answer
+-- is the normal case and is precisely what Bring Mob exists to work around.
 local function CanBringMob(mob)
 	if not IsMobAlive(mob) or mob:FindFirstChild("Ignored") then
 		return false
@@ -4353,13 +4356,13 @@ local function CanBringMob(mob)
 	local root = mob.HumanoidRootPart
 	if type(isnetworkowner) == "function" then
 		local ok, owned = pcall(isnetworkowner, root)
-		if ok and type(owned) == "boolean" then
-			return owned
+		-- Only a definitive "we own it" is trusted. A "false" (or a stub that
+		-- errors / returns nil / returns a non-boolean) falls through to the
+		-- nearby-player heuristic instead of blocking the bring.
+		if ok and owned == true then
+			return true
 		end
 	end
-	-- Some executors do not implement isnetworkowner, while others expose a
-	-- stub that errors or returns nil. Fall back to the nearby-player heuristic
-	-- in all of those cases instead of disabling Bring Mob entirely.
 	return isnetworkowner2(root)
 end
 
@@ -4371,8 +4374,14 @@ local function MoveBringMob(mob, destination)
 	lastBring[mob] = tick()
 	sizepart(mob)
 	mob.HumanoidRootPart.CFrame = destination
-	mob.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
-	mob.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+	-- AssemblyLinearVelocity / AssemblyAngularVelocity may only be written by
+	-- the network owner. On a server-owned part Roblox raises "lacking
+	-- permission", and because every BringMob call site sits un-pcall'd inside a
+	-- `repeat ... until` farm loop, that error would abort the whole farm.
+	pcall(function()
+		mob.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+		mob.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+	end)
 end
 
 function BringMob(Q)
@@ -4389,14 +4398,20 @@ function BringMob(Q)
 	local target = Q.HumanoidRootPart.CFrame
 	local radius = (Settings["Bring Mob Count"] or 2) > 2 and 350 or 200
 	local limit = math.clamp(Settings["Bring Mob Count"] or 2, 2, 6) - 1
+	local enemies = workspace:FindFirstChild("Enemies")
+	if not enemies then
+		return
+	end
 	local moved = 0
-	for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+	for _, mob in ipairs(enemies:GetChildren()) do
 		if moved >= limit then
 			break
 		end
 		if mob ~= Q and mob.Name == Q.Name and CanBringMob(mob)
 			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= radius then
-			MoveBringMob(mob, target * CFrame.new(0, 0, 2))
+			-- Small random spread so stacked mobs do not sit at the exact same
+			-- point and shove each other apart.
+			MoveBringMob(mob, target * CFrame.new(0, math.random(0, 2), math.random(0, 2)))
 			moved += 1
 		end
 	end
