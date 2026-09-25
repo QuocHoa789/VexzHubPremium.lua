@@ -4329,85 +4329,56 @@ function isnetworkowner2(Q)
 	end
 	return true
 end
+-- Only move mobs whose physics the client actually owns. A local CFrame change
+-- on a server-owned mob produces a visual "ghost" that cannot be hit.
+local function CanBringMob(mob)
+	if not IsMobAlive(mob) or mob:FindFirstChild("Ignored") then
+		return false
+	end
+	local root = mob.HumanoidRootPart
+	if type(isnetworkowner) == "function" then
+		local ok, owned = pcall(isnetworkowner, root)
+		return ok and owned == true
+	end
+	-- Without an ownership API, proximity is not proof of ownership.
+	return false
+end
+
+local lastBring = setmetatable({}, { __mode = "k" })
+local function MoveBringMob(mob, destination)
+	if not CanBringMob(mob) or tick() - (lastBring[mob] or 0) < 0.15 then
+		return
+	end
+	lastBring[mob] = tick()
+	sizepart(mob)
+	mob.HumanoidRootPart.CFrame = destination
+	mob.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+	mob.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+end
+
 function BringMob(Q)
-	if not Settings["Bring Mob"] then
+	if Settings["Bring Mob"] == false or not CanBringMob(Q) then
 		return
 	end
-	if Q and E ~= Q then
-		-- [FIX] truoc day .CFrame tren nil => loi moi frame, ClickM1 khong bao gio duoc chay
-		local spawnPart = DetectPartMobBring(Q.Name, Q, true)
-		if not spawnPart then
-			return
-		end
-		E = Q
-		l = spawnPart.CFrame
-		local d = game:GetService("Players").LocalPlayer.Data.Race.Value == "Cyborg"
-			and (t.Character:FindFirstChild("RaceTransformed"))
-			and t.Character.RaceTransformed.Value
-		if d then
-			l = getcenter(Q.Name) or l
-		end
-		DeleteIgnoredMob()
-	end
-	if DaBringMob then
-		delay(0.1, function()
-			getgenv().DaBringMob = false
-		end)
+	local character = t.Character
+	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+	if not playerRoot or (playerRoot.Position - Q.HumanoidRootPart.Position).Magnitude > 50 then
 		return
 	end
-	local d = {}
-	if not Q:FindFirstChild("Ignored") then
-		table.insert(d, Q)
-	end
-	local I = Settings["Bring Mob Count"] or 2
-	local _, o = if I > 2 then 350 else 200
-	if
-		game:GetService("Players").LocalPlayer.Data.Race.Value == "Cyborg"
-		and (t.Character:FindFirstChild("RaceTransformed"))
-		and t.Character.RaceTransformed.Value
-	then
-		_, o = 300, 6
-	else
-		o = I
-	end
-	for I, I in pairs(workspace.Enemies:GetChildren()) do
-		if
-			I ~= Q
-			and I.Name == Q.Name
-			and not I:FindFirstChild("Ignored")
-			and (IsMobAlive(I))
-			and (isnetworkowner2(I.HumanoidRootPart))
-		then
-			if (I.HumanoidRootPart.Position - l.Position).Magnitude <= _ and #d < o then
-				table.insert(d, I)
-			end
+	-- Stack on the live target, not a spawn marker (which can be far away
+	-- or absent for event mobs). Never move the target away from the player.
+	local target = Q.HumanoidRootPart.CFrame
+	local radius = (Settings["Bring Mob Count"] or 2) > 2 and 350 or 200
+	local limit = math.clamp(Settings["Bring Mob Count"] or 2, 2, 6) - 1
+	local moved = 0
+	for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+		if moved >= limit then
+			break
 		end
-	end
-	if
-		l
-		and (t.Character.HumanoidRootPart.Position - Q.HumanoidRootPart.Position).Magnitude <= 50
-		and (isnetworkowner2(t.Character.HumanoidRootPart))
-		and #d >= 2
-	then
-		for Q, Q in pairs(d) do
-			sizepart(Q)
-			if not isnetworkowner2(Q.HumanoidRootPart) then
-				Q.HumanoidRootPart.CFrame = Q.WorldPivot
-				Instance.new("IntValue", Q).Name = "Ignored"
-				task.wait(0.3)
-			else
-				Q.HumanoidRootPart.CFrame = l * CFrame.new(0, math.random(0, 2), math.random(0, 2))
-				task.spawn(function()
-					local d = Q.Humanoid.Health
-					task.wait(2.2)
-					if Q.Humanoid.Health == d and not Q:FindFirstChild("Ignored") then
-						Q.HumanoidRootPart.CFrame = Q.WorldPivot
-						Instance.new("IntValue", Q).Name = "Ignored"
-						task.wait(0.3)
-					end
-				end)
-			end
-			getgenv().DaBringMob = true
+		if mob ~= Q and mob.Name == Q.Name and CanBringMob(mob)
+			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= radius then
+			MoveBringMob(mob, target * CFrame.new(0, 0, 2))
+			moved += 1
 		end
 	end
 end
@@ -4678,7 +4649,7 @@ SettingFarmMainSection.CreateSlider(
 	end
 )
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Bring Mob", Desc = nil, Default = Settings["Bring Mob"] or true },
+	{ Title = "Bring Mob", Desc = nil, Default = Settings["Bring Mob"] ~= false },
 	function(I)
 		SaveSettings("Bring Mob", I)
 	end
@@ -9941,79 +9912,36 @@ function DetectMobRaid()
 	end
 end
 function BringMobNearst(b)
-	if DaBringMob then
-		delay(0.15, function()
-			getgenv().DaBringMob = false
-		end)
+	if Settings["Bring Mob"] == false or not CanBringMob(b) then
 		return
 	end
-	if l and (t.Character.HumanoidRootPart.Position - b.HumanoidRootPart.Position).Magnitude <= 50 then
-		for y, y in pairs(game:GetService("Workspace").Enemies:GetChildren()) do
-			if
-				y ~= b
-				and not y:FindFirstChild("Ignored")
-				and (IsMobAlive(y))
-				and (isnetworkowner2(y.HumanoidRootPart))
-			then
-				if (y.HumanoidRootPart.Position - l.Position).Magnitude <= 350 then
-					sizepart(y)
-					y.HumanoidRootPart.CFrame = l * CFrame.new(0, math.random(0, 2), math.random(0, 2))
-					getgenv().DaBringMob = true
-				end
-			end
+	local character = t.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or (root.Position - b.HumanoidRootPart.Position).Magnitude > 50 then
+		return
+	end
+	local target = b.HumanoidRootPart.CFrame
+	for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+		if mob ~= b and CanBringMob(mob)
+			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= 350 then
+			MoveBringMob(mob, target * CFrame.new(0, 0, 2))
 		end
 	end
 end
 function BringMobRaid(b)
-	if not Settings["Bring Mob"] then
+	if Settings["Bring Mob"] == false or not CanBringMob(b) then
 		return
 	end
-	if b and E ~= b then
-		E = b
-		l = b.HumanoidRootPart.CFrame
-		DeleteIgnoredMob()
-	end
-	if DaBringMob then
-		delay(0.1, function()
-			getgenv().DaBringMob = false
-		end)
+	local character = t.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or (root.Position - b.HumanoidRootPart.Position).Magnitude > 50 then
 		return
 	end
-	local E = {}
-	if not b:FindFirstChild("Ignored") then
-		table.insert(E, b)
-	end
-	for y, y in pairs(game:GetService("Workspace").Enemies:GetChildren()) do
-		if
-			y ~= b
-			and y.Name == b.Name
-			and not y:FindFirstChild("Ignored")
-			and (IsMobAlive(y))
-			and (isnetworkowner2(y.HumanoidRootPart))
-		then
-			if (y.HumanoidRootPart.Position - l.Position).Magnitude <= 200 and #E < 1 then
-				table.insert(E, y)
-			end
-		end
-	end
-	if
-		l
-		and (t.Character.HumanoidRootPart.Position - b.HumanoidRootPart.Position).Magnitude <= 50
-		and (isnetworkowner2(t.Character.HumanoidRootPart))
-	then
-		for b, b in pairs(E) do
-			sizepart(b)
-			b.HumanoidRootPart.CFrame = l * CFrame.new(0, math.random(0, 2), math.random(0, 2))
-			task.spawn(function()
-				local E = b.Humanoid.Health
-				task.wait(3.5)
-				if b.Humanoid.Health == E and not b:FindFirstChild("Ignored") then
-					b.HumanoidRootPart.CFrame = b.WorldPivot
-					Instance.new("IntValue", b).Name = "Ignored"
-					task.wait(0.3)
-				end
-			end)
-			getgenv().DaBringMob = true
+	local target = b.HumanoidRootPart.CFrame
+	for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+		if mob ~= b and mob.Name == b.Name and CanBringMob(mob)
+			and (mob.HumanoidRootPart.Position - target.Position).Magnitude <= 200 then
+			MoveBringMob(mob, target * CFrame.new(0, 0, 2))
 		end
 	end
 end
