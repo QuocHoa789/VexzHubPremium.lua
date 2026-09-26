@@ -4474,14 +4474,36 @@ do
 --   replication => ghost ton tai "vinh vien" day quanh nguoi choi; vi DetectMob()
 --   chon mob gan nhat nen bot bam vao ghost danh mai khong chet.
 --
--- Cach xu ly moi (4 lop):
---   1. Phan loai ownership: "owned" (isnetworkowner xac nhan -> keo ngay) /
---      "blocked" (mob Anchored hoac co nguoi choi khac dang canh tranh vat ly ->
---      khong dung vao) / "probe" (chua ro -> keo THU trong tam gan).
+-- [FIX GHOST MOB v2] Loi con lai sau fix tre (van gay "bring mob toan ghost"):
+--   Duong "owned" FAST-PATH khong xac nhan: chong when isnetworkowner() == true
+--   thi MoveBringMob() ghi CFrame LUON, khong tao probe. Executor co
+--   isnetworkowner() noi gian (tra true cho moi part) hoac server chuyen
+--   ownership giua luc kiem tra va ghi => ghost sinh ra NGAY, va vi khong co
+--   probe nen toan bo lop xac nhan vi tri (giai doan 1) khong bao gio chay voi
+--   mob do. Lop cuoi (damage) chi cat duoc khi MOI MOB KHAC dang mat mau --
+--   farm 1 minh ma toan mob mang ve deu ghost thi khong ai mat mau => khong
+--   ai bi blacklist => bot danh ghost VINH VIEN. Cach sua:
+--     * isnetworkowner() MAT QUYEN quyet dinh: MobOwnership() khong tra
+--       "owned" nua; moi mob khong "blocked" deu di duong "probe" (ghi mot lan,
+--       xem server co giu vi tri trong PROBE_DELAY giay hay keo ve).
+--     * "owned" (ghi nhan khong can probe) chi duoc cap boi confirmedOwned TTL
+--       (6s) sau mot probe THAT THANH CONG; het han la probe lai => ownership
+--       doi chu duoc phat hien trong ~1s.
+--     * PROBE_DELAY 0.45 -> 0.8s (tranh "xac nhan" oan khi server chua kip
+--       correction) va PROBE_REVERT_MIN 15 -> 20 studs (mob that di thoai mai
+--       trong 0.8s ~13 studs).
+--     * probe that bai trong khi API noi true => API noi gian => bo qua API.
+--
+-- Cach xu ly (4 lop, da cap nhat v2):
+--   1. Phan loai ownership: "blocked" (mob Anchored hoac co nguoi choi khac dang
+--      canh tranh vat ly -> khong dung vao) / "probe" (MOI truong hop con lai,
+--      bao gom ca isnetworkowner() noi true -> keo THU trong tam gan).
 --   2. Probe = keo mot lan roi NGUNG ghi CFrame, doi PROBE_DELAY giay de server
 --      kip day trang thai that ve:
 --        * mob van dung cho ta dat -> keo that -> cache "confirmed" (cac frame
---          sau keo thoai mai khong can probe lai), chuyen sang giai doan 2
+--          sau trong 6s keo thoai mai; SAU 6s phai probe lai de bat "ownership
+--          doi chu", v2: truong hop nay van sinh ghost vi ban cu ghi luon),
+--          chuyen sang giai doan 2
 --        * mob bi keo lech ve vi tri cu -> ta khong own no: tra mob ve dung vi
 --          tri server (ghost bien mat ngay) va "cam keo" mob do mot thoi gian
 --          (tang dan). KHONG blacklist khoi targeting vi day van la mob that,
@@ -4492,8 +4514,10 @@ do
 --        * probe that bai lien tiep -> tam ngung doan (khong lam day man hinh
 --          ghost), thoi gian ngung tang dan
 --        * probe thanh cong trong khi isnetworkowner() noi false => API cua
---          executor khong dang tin -> bo qua ket qua false cua no, Bring Mob van
+--          executor khong dang tin -> bo qua ket qua cua no, Bring Mob van
 --          chay binh thuong (giu nguyen muc dich cua fix truoc)
+--        * [v2] probe THAT BAI trong khi isnetworkowner() noi true => API noi
+--          gian -> cung bo qua (tranh tu tin mot API da noi gian)
 --        * nhieu probe thanh cong lien tiep -> mo rong dan ban kinh keo (250->400)
 --   4. Lop cuoi (chong ghost ma phep thu vi tri bo lot): mob da keo ma sau DAMAGE_WINDOW giay danh
 --      lien tuc van khong sut mau nao => ghost => blacklist 25s de IsMobAlive /
@@ -4510,9 +4534,18 @@ local GHOST_ENV = getgenv()
 -- An toan vi ghost gio chi ton tai <= PROBE_DELAY giay va bi gioi han so luong.
 local PROBE_RANGE = 250
 local PROBE_RANGE_MAX = 400 -- tran ban kinh khi da doan thanh cong nhieu lan
-local PROBE_DELAY = 0.45 -- thoi gian cho server xac nhan vi tri that cua mob
+-- [FIX GHOST MOB v2] Tang tu 0.45s -> 0.8s: leash/ownership correction ben
+-- server co the chay cham hon 0.45s; probe ngan qua se "xac nhan" LUON mot mob
+-- ghost (server chua kip keo ve) -> ghost duoc dem vao confirmedOwned va
+-- duoc tra thu tin "owned" 6s nua chi vi ban xet nghi ngan hon thoi gian
+-- server phan ung.
+local PROBE_DELAY = 0.8 -- thoi gian cho server xac nhan vi tri that cua mob
 local PROBE_REVERT_DIST = 60 -- lech qua nguong nay => server da keo mob ve
-local PROBE_REVERT_MIN = 15 -- san duoi: mob di chuyen binh thuong cung lech vai studs
+-- San duoi cho probe: mob TA own thi server cho no di, va trong 0.8s mob di
+-- duoc ~16 studs/s * 0.8s ~ 13 studs; de 20 de tranh "that bai" oan lan doan
+-- vi mob that chi di thoai mai. Khong anh huong phat hien ghost vi ghost
+-- thua hoc nam O VI TRI CU (cach stack hang chuc/nghin studs, lon hat nguong).
+local PROBE_REVERT_MIN = 20 -- san duoi: mob rieng mo phong di duoc ~13 studs trong 0.8s
 local PROBE_REVERT_RATIO = 0.5 -- va khong qua 50% quang duong ma ta vua keo
 local DONT_BRING_COOLDOWN = 8 -- mob keo khong duoc: cam keo lai it nhat 8s (tang dan)
 local DONT_BRING_COOLDOWN_MAX = 120
@@ -4585,15 +4618,36 @@ local function GetOtherPlayerRoots()
 	return list
 end
 
--- Tra ve "owned" / "blocked" / "probe" (xem giai thich o dau khoi nay).
+-- Tra ve "blocked" / "probe" + ket qua THAM KHAO cua isnetworkowner().
+-- [FIX GHOST MOB v2] KHONG bao gio tra "owned" nua -- day chinh la lon doc
+-- lam "bring mob ve ma toan ghost mob" ton tai sau fix cu:
+--   Ban cu cho rang isnetworkowner() == true la ban xac nhan "ta own mob nay,
+--   ghi CFrame luon, khong can xac nhan". The thuc:
+--     * nhieu executor co isnetworkowner NOI GIAN: tra true cho moi part trong
+--       workspace (hoac true cho ca nhung mob server/nguoi khac dang own) =>
+--       moi lenh ghi chi doi ban copy client => ghost sinh RA NGAY khi bring,
+--       va vi duong "owned" khong tao probe nen toan bo lop xac nhan vi tri
+--       (giai doan 1) khong bao gio chay duoc voi mob do;
+--     * ngay ca khi API trung thuc, server co the chuyen ownership cho nguoi
+--       choi khac GIUA luc kiem tra va luc ghi (farm dong nguoi) => ghost.
+--   Chau cuong duy nhat la THUC NGHIEM: ghi mot lan (probe) roi xem server co
+--   GIU vi tri moi trong PROBE_DELAY giay hay keo ve. Vi vay ham nay chi con
+--   2 tra ve: "blocked" (chac chan khong duoc vao: anchored / nguoi khac gan
+--   hon) hoac "probe" (moi truong hop con lai, bao gom ca API noi true).
+--   Etat "owned" (ghi nhan ma khong can probe) chi duoc cap boi
+--   confirmedOwned TTL -- duoc dat BOI mot probe da that suc xac nhan trong
+--   VerifyBringProbes (xem MoveBringMob).
+--   Ket qua API van duoc thu thap (tra ve giatri thu 2) de tu thich nghi:
+--   probe thanh cong trong khi API noi false/loi -> VexOwnApiUnreliable; probe
+--   that bai trong khi API noi true -> VexOwnApiUnreliable (API noi gian).
 local function MobOwnership(mob, playerRoot)
 	local root = mob and mob:FindFirstChild("HumanoidRootPart")
 	if not root or not root.Parent then
-		return "blocked"
+		return "blocked", nil
 	end
 	-- Part Anchored luon do server mo phong: client ghi CFrame chac chan sinh ghost.
 	if root.Anchored then
-		return "blocked"
+		return "blocked", nil
 	end
 	-- Roblox TU DONG giao network ownership cua NPC cho nguoi choi gan mob nhat.
 	-- Vi vay chi nen dung vao mob khi ta dang la nguoi gan no nhat (raid/dong
@@ -4604,27 +4658,28 @@ local function MobOwnership(mob, playerRoot)
 		local selfDist = (root.Position - selfRoot.Position).Magnitude
 		for _, otherRoot in ipairs(GetOtherPlayerRoots()) do
 			if otherRoot.Parent and (root.Position - otherRoot.Position).Magnitude + 15 < selfDist then
-				return "blocked"
+				return "blocked", nil
 			end
 		end
 	else
 		-- Khong biet nhan vat dang o dau: lui ve heuristic cu.
 		for _, otherRoot in ipairs(GetOtherPlayerRoots()) do
 			if otherRoot.Parent and (otherRoot.Position - root.Position).Magnitude <= 300 then
-				return "blocked"
+				return "blocked", nil
 			end
 		end
 	end
+	-- Tham khao, KHONG quyet dinh: nhieu executor tra false cho MOI mob trong
+	-- workspace.Enemies nen ket qua nay khong duoc dung de chan hoac cho phep
+	-- (do chinh la 2 hanh dong lam ra bug cua cac ban cu).
+	local apiOwned
 	if type(isnetworkowner) == "function" and GHOST_ENV.VexOwnApiUnreliable ~= true then
 		local ok, owned = pcall(isnetworkowner, root)
-		if ok and owned == true then
-			return "owned"
+		if ok then
+			apiOwned = owned
 		end
-		-- false / loi / tra ve nil: nhieu executor tra false cho MOI mob trong
-		-- workspace.Enemies nen khong duoc dung ket qua nay de chan Bring Mob
-		-- (do chinh la loi cua ban truoc). Coi nhu "probe" de server tu phan xu.
 	end
-	return "probe"
+	return "probe", apiOwned
 end
 
 -- Ban kinh keo thu hien tai: mo rong dan khi cac lan doan deu thanh cong.
@@ -4684,10 +4739,12 @@ VerifyBringProbes = function()
 					-- Keo duoc that => bo che do "ngung doan" (khu vuc nay own duoc)
 					pessimisticUntil = 0
 					pessimisticCycles = 0
-					if probe.state == "probe" and type(isnetworkowner) == "function" then
-						-- isnetworkowner() noi false nhung server van nhan vi tri moi
-						-- => API khong dang tin; tu day bo qua ket qua false cua no de
-						-- Bring Mob khong bi "teo" tren executor do.
+					if probe.state ~= true and type(isnetworkowner) == "function" then
+						-- isnetworkowner() noi false/loi (hoac chua goi duoc)
+						-- nhung server van GIU vi tri moi ta dat => API cua
+						-- executor khong dang tin; tu day bo qua ket qua cua no
+						-- (khong chan, khong cho phep) de Bring Mob khong bi
+						-- "teo" tren executor do.
 						GHOST_ENV.VexOwnApiUnreliable = true
 					end
 					-- Giai doan 2: xac nhan mob that su danh duoc (mau co tut).
@@ -4714,6 +4771,12 @@ VerifyBringProbes = function()
 					strikeRec.at = now
 					GHOST_ENV.GhostMobStrikes[mob] = strikeRec
 					local strikes = strikeRec.n
+					if probe.state == true then
+						-- isnetworkowner() noi "ta own" ma server van keo mob ve
+						-- cho cu => API NOI GIAN tren executor nay; tu day bo qua
+						-- hoan toan ket qua cua no (khong chan, khong cho phep).
+						GHOST_ENV.VexOwnApiUnreliable = true
+					end
 					-- KHONG blacklist mob nay khoi targeting: day van la mob THAT nam
 					-- dung vi tri server, chi la ta khong keo no ve duoc (server/
 					-- nguoi choi khac dang own vat ly). Neu blacklist thi bot se bo
@@ -4821,8 +4884,48 @@ local function MoveBringMob(mob, destination, playerRoot)
 	if not playerRoot then
 		return false
 	end
-	local state = confirmedOwned[mob]
-	state = (state ~= nil and state > now) and "owned" or MobOwnership(mob, playerRoot)
+	-- [FIX GHOST MOB v2] Etat "owned" (ghi nhan ma khong can probe) CHAC CHAN
+	-- chi co nguon duy nhat: confirmedOwned TTL -- duoc dat boi mot probe vi tri
+	-- da that suc xac nhan (giai doan 1) hoac moi rong tu giai doan 2 sau khi
+	-- da co bang chung. Khi TTL het han (6s) thi mob tu dong CHUYEN VE duong
+	-- "probe": ghi mot lan, doi server xac nhan lai -- vay la cach ma
+	-- "ownership doi chu" (nguoi choi khac bay gan hon) bi phat hien trong
+	-- ~1s thay vi bi ghi CFrame thanh ghost tu lan doi chu. Ket qua
+	-- isnetworkowner() khong co quyenden cap nhat nao: xem ghi chu o
+	-- MobOwnership.
+	local state, apiOwned = confirmedOwned[mob], nil
+	state = (state ~= nil and state > now) and "owned" or nil
+	if
+		state == "owned"
+		and GHOST_ENV.VexOwnApiUnreliable ~= true
+		and type(isnetworkowner) == "function"
+	then
+		-- Cache "xuat xac" van co hieu luc, NHUNG neu API noi RANG RA rang ta
+		-- khong con own mob nay (ownership vua bi chuyen sang nguoi choi khac)
+		-- thi KHONG ghi theo blind: sua cach thanh "probe" de xac nhan lai
+		-- (gui probe + PROBE_DELAY). Day la vai tro CON LAI duy nhat cua
+		-- isnetworkowner(): no khong co quyenden CHU TRUNG mot lenh ghi, chi
+		-- duoc quyen KIEU CAI len cache. Gioi han: neu executor noi gian (luon
+		-- tra false) thi chi bi buoc probe them - vay cung chinh la dieu ta can
+		-- (probe mob that thanh cong => dat VexOwnApiUnreliable => dung thue
+		-- API luon).
+		local ok, owned = pcall(isnetworkowner, root)
+		if ok and owned == false then
+			state = nil
+		end
+	end
+	if state ~= "owned" then
+		state, apiOwned = MobOwnership(mob, playerRoot)
+		if state ~= "blocked" and pending ~= nil then
+			-- Probe giai doan 2 con dang chay con cache "xuat xac" bi sua
+			-- (het TTL hoac API bao ownership doi chu): ban ghi do khong con
+			-- y nghia, va neu giu no thi lenh ghi ben duoi se di vao nhanh
+			-- "pending.dest = ..." -- mot lan ghi blind nua thay vi tao probe
+			-- giai doan 1 moi. Xoa de buoc probe lai tu dau.
+			bringProbes[mob] = nil
+			pending = nil
+		end
+	end
 	if state == "blocked" then
 		return false
 	end
@@ -4852,8 +4955,10 @@ local function MoveBringMob(mob, destination, playerRoot)
 		root.AssemblyAngularVelocity = Vector3.zero
 	end)
 	if state == "owned" then
-		-- Da duoc xac nhan (isnetworkowner noi true hoac probe truoc do thanh
-		-- cong): server chac chan nhan vi tri moi, khong can doan lai.
+		-- Da duoc XAC NHAN BAN CHUNG (mot probe vi tri truoc do that suc giu
+		-- vi tri, confirmedOwned TTL con hieu luc): server chac chan nhan
+		-- vi tri moi, khong can doan lai. Ghi chu: isnetworkowner() KHONG TU
+		-- bao gio chi ra duong nay -- xem ghi chu tren.
 		if pending ~= nil then
 			pending.dest = destination.Position
 		end
@@ -4876,7 +4981,12 @@ local function MoveBringMob(mob, destination, playerRoot)
 		health = humanoid and humanoid.Health or 0,
 		at = now,
 		stage = 1,
-		state = state,
+		-- [FIX GHOST MOB v2] Ket qua THAM KHAO cua isnetworkowner() (true/false/
+		-- nil) -- khong phai trang thai "owned"/"probe" nua. VerifyBringProbes
+		-- dung no de ket luan API executor co dang tin hay khong:
+		--   probe THAT BAI ma API noi true  => API noi gian  -> bo qua API
+		--   probe THANH CONG ma API noi false/nil => API khong dang tin -> bo qua
+		state = apiOwned,
 	}
 	pendingMoveChecks += 1
 	StartProbeWatcher()
